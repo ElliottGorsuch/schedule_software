@@ -49,21 +49,26 @@ This repository is a **redacted portfolio snapshot** of the original codebase.  
 |-------|------------|
 | Front-end | HTML, Vanilla JS, CSS (no framework) |
 | Mapping | Google Maps JavaScript API |
-| Back-end | Google Apps Script (serverless) & Velo by Wix (\*.jsw REST stubs) |
+| Back-end | Google Apps Script (serverless) & (\*.jsw REST stubs) |
 | Data | Google Sheets (multiple tabs) |
-| Distance Calc | Google Maps Directions API + haversine fallback |
+| Distance Calc | Google Maps Directions API  |
 | DevOps | GitHub Actions (lint / deploy) – _optional sample_ |
 
 ---
 
 ## 4. Repository Layout
 ```
-├── backend/
-│   ├── distanceCalculator.jsw
-│   └── geocode.jsw
-├── Therapist_Scheduling_System_User_Guide.txt
-└── README.md
-```
+├── appsscript.json               # Project manifest file for Google Apps Script
+├── Code.gs                       # Main server-side logic
+├── SheetsService.gs              # Functions for interacting with Google Sheets
+├── GeocodeService.gs            # Functions for geocoding addresses
+├── DistanceService.gs           # Calculates distances and travel time
+├── test.gs                       # Unit tests and debugging functions
+├── map.html                      # HTML interface for interactive map view
+├── main.html                     # Core HTML interface for user interactions
+├── index.html                    # Table HTML page
+├── README.md                     # Project documentation
+
 
 ---
 
@@ -87,11 +92,6 @@ This repository is a **redacted portfolio snapshot** of the original codebase.  
 4. Copy the web-app URL → share with users.
 ```
 
-### Option B – Wix Velo Site
-1. Create a new Wix site and enable _Dev Mode_.  
-2. Paste contents of `backend/*.jsw` into the Velo backend.  
-3. Add the provided HTML, CSS, and JS into a page; wire up API endpoints.  
-4. Publish.
 
 ---
 
