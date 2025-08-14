@@ -1,0 +1,1828 @@
+/**
+ * DistanceService.gs - Distance and travel time calculations
+ * Replaces the Wix distanceCalculator.jsw functionality
+ * Public release hardening: sensitive logs gated by DEBUG_MODE; PII-free logging; API keys read from Script Properties.
+ */
+
+// Lightweight debug logger gated by DEBUG_MODE script property or global
+function distanceDebugLog() {
+  var isDebug = false;
+  try {
+    if (typeof DEBUG_MODE !== 'undefined') {
+      isDebug = !!DEBUG_MODE;
+    } else {
+      var prop = PropertiesService.getScriptProperties().getProperty('DEBUG_MODE');
+      isDebug = prop === 'true';
+    }
+  } catch (e) {
+    isDebug = false;
+  }
+  if (isDebug && typeof console !== 'undefined' && console && console.log) {
+    // eslint-disable-next-line prefer-rest-params
+    console.log.apply(console, arguments);
+  }
+}
+
+class DistanceService {
+  constructor() {
+    // Use the same API key as GeocodeService
+    this.apiKey = this.getApiKey();
+    
+    if (!this.apiKey) {
+      console.warn('Google Maps API key not configured. Distance calculations will not work.');
+    }
+    
+    // Configuration for rate limiting and batch processing
+    this.maxOrigins = 25; // Max origins per API request
+    this.maxDestinations = 25; // Max destinations per API request
+    this.requestDelay = 100; // Delay between API requests (ms)
+  }
+
+  /**
+   * Get API key from script properties
+   */
+  getApiKey() {
+    try {
+      return PropertiesService.getScriptProperties().getProperty('GOOGLE_MAPS_API_KEY');
+    } catch (error) {
+      console.error('Error getting API key:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Calculate travel times for all therapists to a new client
+   * @param {number} clientId - The ID of the new client
+   * @returns {Array} Array of travel time results
+   */
+  static calculateTravelTimesForNewClient(clientId) {
+    distanceDebugLog(`Calculating travel times for all therapists to new client ${clientId}`);
+    
+    try {
+      // Get client data
+      const clients = SheetsService.getClientsData();
+      const client = clients.find(c => Number(c.id) === Number(clientId));
+      
+      if (!client) {
+        throw new Error(`Client ${clientId} not found`);
+      }
+      
+      // Get all therapists
+      const therapists = SheetsService.getTherapistsData();
+      
+      if (therapists.length === 0) {
+        console.warn('No therapists found for travel time calculation');
+        return [];
+      }
+      
+      distanceDebugLog(`Calculating travel times from ${therapists.length} therapists to client ${clientId}`);
+      
+      // Calculate travel times for each therapist
+      const results = [];
+      
+      therapists.forEach((therapist, index) => {
+        try {
+          // Add delay to respect API rate limits
+          if (index > 0) {
+            Utilities.sleep(200); // 200ms delay between requests
+          }
+          
+          const travelTime = this.calculateTravelTime(therapist, client);
+          
+          results.push({
+            therapistId: therapist.id,
+            clientId: clientId,
+            distanceInMiles: travelTime.distanceInMiles,
+            durationInMinutes: travelTime.durationInMinutes,
+            distanceText: travelTime.distanceText,
+            durationText: travelTime.durationText
+          });
+          
+          // Add session record to the Sessions sheet
+          this.addSessionRecord(therapist.id, clientId, travelTime);
+          
+        } catch (error) {
+          console.error(`Failed to calculate travel time for therapist ${therapist.id}:`, error);
+          
+          // Add a fallback session record with zero values
+          results.push({
+            therapistId: therapist.id,
+            clientId: clientId,
+            distanceInMiles: 0,
+            durationInMinutes: 0,
+            distanceText: "0 mi",
+            durationText: "0 mins"
+          });
+          
+          this.addSessionRecord(therapist.id, clientId, {
+            distanceInMiles: 0,
+            durationInMinutes: 0
+          });
+        }
+      });
+      
+      distanceDebugLog(`Completed travel time calculations for client ${clientId}: ${results.length} results`);
+      return results;
+      
+    } catch (error) {
+      console.error('Error in calculateTravelTimesForNewClient:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Calculate travel times for a new therapist to all existing clients
+   * @param {number} therapistId - The ID of the new therapist
+   * @returns {Array} Array of travel time results
+   */
+  static calculateTravelTimesForNewTherapist(therapistId) {
+    distanceDebugLog(`Calculating travel times for new therapist ${therapistId} to all clients`);
+    
+    try {
+      // Get therapist data
+      const therapists = SheetsService.getTherapistsData();
+      const therapist = therapists.find(t => Number(t.id) === Number(therapistId));
+      
+      if (!therapist) {
+        throw new Error(`Therapist ${therapistId} not found`);
+      }
+      
+      // Get all clients
+      const clients = SheetsService.getClientsData();
+      
+      if (clients.length === 0) {
+        console.warn('No clients found for travel time calculation');
+        return [];
+      }
+      
+      distanceDebugLog(`Calculating travel times from therapist ${therapistId} to ${clients.length} clients`);
+      
+      // Calculate travel times for each client
+      const results = [];
+      
+      clients.forEach((client, index) => {
+        try {
+          // Add delay to respect API rate limits
+          if (index > 0) {
+            Utilities.sleep(200); // 200ms delay between requests
+          }
+          
+          const travelTime = this.calculateTravelTime(therapist, client);
+          
+          results.push({
+            therapistId: therapistId,
+            clientId: client.id,
+            distanceInMiles: travelTime.distanceInMiles,
+            durationInMinutes: travelTime.durationInMinutes,
+            distanceText: travelTime.distanceText,
+            durationText: travelTime.durationText
+          });
+          
+          // Add session record to the Sessions sheet
+          this.addSessionRecord(therapistId, client.id, travelTime);
+          
+        } catch (error) {
+          console.error(`Failed to calculate travel time for client ${client.id}:`, error);
+          
+          // Add a fallback session record with zero values
+          results.push({
+            therapistId: therapistId,
+            clientId: client.id,
+            distanceInMiles: 0,
+            durationInMinutes: 0,
+            distanceText: "0 mi",
+            durationText: "0 mins"
+          });
+          
+          this.addSessionRecord(therapistId, client.id, {
+            distanceInMiles: 0,
+            durationInMinutes: 0
+          });
+        }
+      });
+      
+      distanceDebugLog(`Completed travel time calculations for therapist ${therapistId}: ${results.length} results`);
+      return results;
+      
+    } catch (error) {
+      console.error('Error in calculateTravelTimesForNewTherapist:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Calculate travel time between a therapist and client
+   * @param {Object} therapist - Therapist object with lat/lng
+   * @param {Object} client - Client object with lat/lng
+   * @returns {Object} Travel time result
+   */
+  static calculateTravelTime(therapist, client) {
+    distanceDebugLog(`Calculating travel time from therapist ${therapist.id} to client ${client.id}`);
+    
+    try {
+      // Get API key from Script Properties (same as GeocodeService)
+      const apiKey = PropertiesService.getScriptProperties().getProperty('GOOGLE_MAPS_API_KEY');
+      
+      if (!apiKey) {
+        throw new Error('Google Maps API key not found. Please set GOOGLE_MAPS_API_KEY in Script Properties.');
+      }
+      
+      // Validate coordinates
+      if (!therapist.lat || !therapist.lng || !client.lat || !client.lng) {
+        throw new Error('Missing coordinates for therapist or client');
+      }
+      
+      // Build origins and destinations
+      const origin = `${therapist.lat},${therapist.lng}`;
+      const destination = `${client.lat},${client.lng}`;
+      
+      // Build the Distance Matrix API URL
+      const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&units=imperial&mode=driving&key=${apiKey}`;
+      
+      distanceDebugLog('Making Distance Matrix API request (key hidden)');
+      
+      // Make the API request
+      const response = UrlFetchApp.fetch(url);
+      const data = JSON.parse(response.getContentText());
+      
+      if (data.status !== 'OK') {
+        throw new Error(`Distance Matrix API error: ${data.status} - ${data.error_message || 'Unknown error'}`);
+      }
+      
+      if (!data.rows || data.rows.length === 0 || !data.rows[0].elements || data.rows[0].elements.length === 0) {
+        throw new Error('No distance data returned from API');
+      }
+      
+      const element = data.rows[0].elements[0];
+      
+      if (element.status !== 'OK') {
+        throw new Error(`Distance calculation failed: ${element.status}`);
+      }
+      
+      // Extract distance and duration
+      const distance = element.distance;
+      const duration = element.duration;
+      
+      // Convert to miles and minutes
+      const distanceInMiles = this.metersToMiles(distance.value);
+      const durationInMinutes = Math.round(duration.value / 60);
+      
+      const result = {
+        distanceInMiles: distanceInMiles,
+        durationInMinutes: durationInMinutes,
+        distanceText: `${distanceInMiles.toFixed(1)} mi`,
+        durationText: `${durationInMinutes} mins`
+      };
+      
+      distanceDebugLog('Travel time calculated');
+      return result;
+      
+    } catch (error) {
+      console.error('Error calculating travel time:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Add a session record to the Sessions sheet
+   * @param {number} therapistId - Therapist ID
+   * @param {number} clientId - Client ID
+   * @param {Object} travelTime - Travel time data
+   */
+  static addSessionRecord(therapistId, clientId, travelTime) {
+    try {
+      const sheet = SheetsService.getSpreadsheet().getSheetByName(SHEET_NAMES.SESSIONS);
+      
+      const row = [
+        therapistId,
+        clientId,
+        travelTime.durationInMinutes,
+        travelTime.distanceInMiles
+      ];
+      
+      sheet.appendRow(row);
+      distanceDebugLog(`Added session record for T${therapistId}-C${clientId}`);
+      
+    } catch (error) {
+      console.error('Error adding session record:', error);
+      // Don't throw - this is not critical for the main operation
+    }
+  }
+  
+  /**
+   * Convert meters to miles
+   * @param {number} meters - Distance in meters
+   * @returns {number} Distance in miles
+   */
+  static metersToMiles(meters) {
+    return meters * 0.000621371;
+  }
+  
+  /**
+   * Calculate travel time between two coordinates (simplified version)
+   * @param {number} lat1 - Origin latitude
+   * @param {number} lng1 - Origin longitude
+   * @param {number} lat2 - Destination latitude
+   * @param {number} lng2 - Destination longitude
+   * @returns {Object} Travel time result
+   */
+  static calculateTravelTimeByCoordinates(lat1, lng1, lat2, lng2) {
+    const therapist = { lat: lat1, lng: lng1, id: 'temp' };
+    const client = { lat: lat2, lng: lng2, id: 'temp' };
+    
+    return this.calculateTravelTime(therapist, client);
+  }
+  
+  /**
+   * Batch calculate travel times for multiple therapist-client pairs
+   * @param {Array} pairs - Array of {therapistId, clientId} objects
+   * @returns {Array} Array of travel time results
+   */
+  static batchCalculateTravelTimes(pairs) {
+    distanceDebugLog(`Starting batch travel time calculation for ${pairs.length} pairs`);
+    
+    const therapists = SheetsService.getTherapistsData();
+    const clients = SheetsService.getClientsData();
+    const results = [];
+    
+    pairs.forEach((pair, index) => {
+      try {
+        // Add delay to respect API rate limits
+        if (index > 0) {
+          Utilities.sleep(200); // 200ms delay between requests
+        }
+        
+        const therapist = therapists.find(t => Number(t.id) === Number(pair.therapistId));
+        const client = clients.find(c => Number(c.id) === Number(pair.clientId));
+        
+        if (!therapist || !client) {
+          throw new Error(`Therapist ${pair.therapistId} or client ${pair.clientId} not found`);
+        }
+        
+        const travelTime = this.calculateTravelTime(therapist, client);
+        
+        results.push({
+          therapistId: pair.therapistId,
+          clientId: pair.clientId,
+          ...travelTime,
+          success: true
+        });
+        
+      } catch (error) {
+        console.error(`Failed to calculate travel time for pair T${pair.therapistId}-C${pair.clientId}:`, error);
+        
+        results.push({
+          therapistId: pair.therapistId,
+          clientId: pair.clientId,
+          distanceInMiles: 0,
+          durationInMinutes: 0,
+          distanceText: "0 mi",
+          durationText: "0 mins",
+          success: false,
+          error: error.message
+        });
+      }
+    });
+    
+    distanceDebugLog(`Completed batch travel time calculation: ${results.filter(r => r.success).length} successes, ${results.filter(r => !r.success).length} failures`);
+    return results;
+  }
+  
+  /**
+   * Update travel time for a specific therapist-client pair
+   * @param {number} therapistId - Therapist ID
+   * @param {number} clientId - Client ID
+   * @returns {Object} Updated travel time result
+   */
+  static updateTravelTime(therapistId, clientId) {
+    distanceDebugLog(`Updating travel time for therapist ${therapistId} and client ${clientId}`);
+    
+    try {
+      const therapists = SheetsService.getTherapistsData();
+      const clients = SheetsService.getClientsData();
+      
+      const therapist = therapists.find(t => Number(t.id) === Number(therapistId));
+      const client = clients.find(c => Number(c.id) === Number(clientId));
+      
+      if (!therapist || !client) {
+        throw new Error(`Therapist ${therapistId} or client ${clientId} not found`);
+      }
+      
+      const travelTime = this.calculateTravelTime(therapist, client);
+      
+      // Update the session record in the Sessions sheet
+      this.updateSessionRecord(therapistId, clientId, travelTime);
+      
+      return {
+        success: true,
+        ...travelTime
+      };
+      
+    } catch (error) {
+      console.error('Error updating travel time:', error);
+      return {
+        success: false,
+        error: error.message,
+        distanceInMiles: 0,
+        durationInMinutes: 0,
+        distanceText: "0 mi",
+        durationText: "0 mins"
+      };
+    }
+  }
+  
+  /**
+   * Update an existing session record in the Sessions sheet
+   * @param {number} therapistId - Therapist ID
+   * @param {number} clientId - Client ID
+   * @param {Object} travelTime - Updated travel time data
+   */
+  static updateSessionRecord(therapistId, clientId, travelTime) {
+    try {
+      const sheet = SheetsService.getSpreadsheet().getSheetByName(SHEET_NAMES.SESSIONS);
+      const data = sheet.getDataRange().getValues();
+      
+      // Find the existing session record
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][0]) === String(therapistId) && String(data[i][1]) === String(clientId)) {
+          // Update the existing record
+          sheet.getRange(i + 1, 3, 1, 2).setValues([[
+            travelTime.durationInMinutes,
+            travelTime.distanceInMiles
+          ]]);
+          
+          distanceDebugLog(`Updated session record for T${therapistId}-C${clientId}`);
+          return;
+        }
+      }
+      
+      // If no existing record found, add a new one
+      this.addSessionRecord(therapistId, clientId, travelTime);
+      
+    } catch (error) {
+      console.error('Error updating session record:', error);
+      // Don't throw - this is not critical for the main operation
+    }
+  }
+
+  /**
+   * Calculate travel time between two clients with retry mechanism
+   * @param {Object} client1 - First client object with lat/lng
+   * @param {Object} client2 - Second client object with lat/lng
+   * @returns {Object} Travel time result
+   */
+  static calculateClientToClientTravelTime(client1, client2) {
+    distanceDebugLog(`Calculating client-to-client distance: C${client1.id} -> C${client2.id}`);
+    
+    // Initial coordinate validation
+    let useFallback = false;
+    if (!client1.lat || !client1.lng || !client2.lat || !client2.lng || 
+        isNaN(client1.lat) || isNaN(client1.lng) || isNaN(client2.lat) || isNaN(client2.lng)) {
+      console.warn('Invalid stored coordinates - using address fallback');
+      useFallback = true;
+    } else if (client1.lat === client2.lat && client1.lng === client2.lng) {
+      console.warn('Identical stored coordinates - using address fallback');
+      useFallback = true;
+    }
+    
+    // Re-geocode if needed
+    let originClient = client1;
+    let destClient = client2;
+    if (useFallback) {
+      distanceDebugLog('Re-geocoding addresses...');
+      originClient = { ...client1, ...GeocodeService.geocodeAddress(client1.address) };
+      destClient = { ...client2, ...GeocodeService.geocodeAddress(client2.address) };
+      
+      if (!originClient.lat || !originClient.lng || !destClient.lat || !destClient.lng) {
+        throw new Error('Failed to re-geocode addresses');
+      }
+      
+      distanceDebugLog('Re-geocoded addresses successfully');
+    }
+    
+    const apiKey = PropertiesService.getScriptProperties().getProperty('GOOGLE_MAPS_API_KEY');
+    if (!apiKey) throw new Error('API key missing');
+    
+    const origin = `${originClient.lat},${originClient.lng}`;
+    const destination = `${destClient.lat},${destClient.lng}`;
+    
+    const url = `https://maps.googleapis.com/maps/api/distancematrix/json?origins=${origin}&destinations=${destination}&units=imperial&mode=driving&key=${apiKey}`;
+    
+    let retries = 3;
+    let delay = 1000;
+    
+    while (retries > 0) {
+      try {
+        distanceDebugLog(`API request (attempt ${4 - retries}): URL redacted`);
+        const response = UrlFetchApp.fetch(url, { muteHttpExceptions: true });
+        const code = response.getResponseCode();
+        const data = JSON.parse(response.getContentText());
+        
+        distanceDebugLog(`Response: Code ${code}, Status ${data.status}`);
+        
+        if (code === 200 && data.status === 'OK') {
+          const element = data.rows[0].elements[0];
+          if (element.status === 'OK') {
+            const distanceInMiles = this.metersToMiles(element.distance.value);
+            const durationInMinutes = Math.round(element.duration.value / 60);
+            
+            distanceDebugLog(`Success: ${distanceInMinutes} mins, ${distanceInMiles.toFixed(1)} mi`);
+            
+            return {
+              distanceInMiles,
+              durationInMinutes,
+              distanceText: `${distanceInMiles.toFixed(1)} mi`,
+              durationText: `${durationInMinutes} mins`
+            };
+          } else {
+            console.warn(`Element status: ${element.status}`);
+          }
+        }
+        
+        retries--;
+        if (retries > 0) {
+          distanceDebugLog(`Retrying in ${delay}ms... (${retries} attempts left)`);
+          Utilities.sleep(delay);
+          delay *= 2;
+        }
+        
+      } catch (error) {
+        console.error('API error:', error);
+        retries--;
+        if (retries > 0) {
+          distanceDebugLog(`Retrying in ${delay}ms... (${retries} attempts left)`);
+          Utilities.sleep(delay);
+          delay *= 2;
+        }
+      }
+    }
+    
+    throw new Error('Failed to calculate distance after 3 retries');
+  }
+
+  static testSingleClientPair(sourceId, targetId) {
+    const clients = SheetsService.getClientsData();
+    const source = clients.find(c => Number(c.id) === Number(sourceId));
+    const target = clients.find(c => Number(c.id) === Number(targetId));
+    if (!source || !target) throw new Error('Client not found');
+    return this.calculateClientToClientTravelTime(source, target);
+  }
+
+  /**
+   * Calculate distances for a new client to all existing clients
+   * @param {number} clientId - The ID of the new client
+   * @returns {Array} Array of client distance results
+   */
+  static calculateClientToClientDistancesForNewClient(clientId) {
+    distanceDebugLog(`Calculating client-to-client distances for new client ${clientId}`);
+    
+    try {
+      // Get client data
+      const clients = SheetsService.getClientsData();
+      const newClient = clients.find(c => Number(c.id) === Number(clientId));
+      
+      if (!newClient) {
+        throw new Error(`Client ${clientId} not found`);
+      }
+      
+      // Get all other clients (excluding the new client)
+      const otherClients = clients.filter(c => Number(c.id) !== Number(clientId));
+      
+      if (otherClients.length === 0) {
+        console.warn('No other clients found for distance calculation');
+        return [];
+      }
+      
+      distanceDebugLog(`Calculating distances from new client ${clientId} to ${otherClients.length} existing clients`);
+      
+      const results = [];
+      
+      otherClients.forEach((client, index) => {
+        try {
+          // Add delay to respect API rate limits
+          if (index > 0) {
+            Utilities.sleep(200); // 200ms delay between requests
+          }
+          
+          const travelTime = this.calculateClientToClientTravelTime(newClient, client);
+          
+          results.push({
+            sourceClientId: clientId,
+            targetClientId: client.id,
+            distanceInMiles: travelTime.distanceInMiles,
+            durationInMinutes: travelTime.durationInMinutes,
+            distanceText: travelTime.distanceText,
+            durationText: travelTime.durationText
+          });
+          
+          // Also calculate reverse direction
+          const reverseTravelTime = this.calculateClientToClientTravelTime(client, newClient);
+          
+          results.push({
+            sourceClientId: client.id,
+            targetClientId: clientId,
+            distanceInMiles: reverseTravelTime.distanceInMiles,
+            durationInMinutes: reverseTravelTime.durationInMinutes,
+            distanceText: reverseTravelTime.distanceText,
+            durationText: reverseTravelTime.durationText
+          });
+          
+        } catch (error) {
+          console.error(`Failed to calculate client-to-client distance for client ${client.id}:`, error);
+          
+          // Add fallback records with zero values
+          results.push({
+            sourceClientId: clientId,
+            targetClientId: client.id,
+            distanceInMiles: 0,
+            durationInMinutes: 0,
+            distanceText: "0 mi",
+            durationText: "0 mins"
+          });
+          
+          results.push({
+            sourceClientId: client.id,
+            targetClientId: clientId,
+            distanceInMiles: 0,
+            durationInMinutes: 0,
+            distanceText: "0 mi",
+            durationText: "0 mins"
+          });
+        }
+      });
+      
+      // Store results in ClientDistances sheet
+      this.addClientDistanceRecords(results);
+      
+      distanceDebugLog(`Completed client-to-client distance calculations for new client ${clientId}: ${results.length} results`);
+      return results;
+      
+    } catch (error) {
+      console.error('Error in calculateClientToClientDistancesForNewClient:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Calculate ALL client-to-client distances (initial setup)
+   * @returns {Array} Array of all client distance results
+   */
+  static calculateAllClientToClientDistances() {
+    distanceDebugLog('Starting calculation of ALL client-to-client distances');
+    
+    try {
+      const allClients = SheetsService.getClientsData();
+      
+      // Filter clients with valid coordinates
+      const clients = allClients.filter(c => c.lat && c.lng && !isNaN(c.lat) && !isNaN(c.lng));
+      
+      distanceDebugLog(`Total clients: ${allClients.length}, Valid coordinates: ${clients.length}`);
+      
+      if (clients.length < 2) {
+        console.warn('Need at least 2 clients with valid coordinates');
+        return [];
+      }
+      
+      distanceDebugLog(`Calculating distances between ${clients.length} clients`);
+      
+      // Clear existing ClientDistances sheet
+      const spreadsheet = SheetsService.getSpreadsheet();
+      let sheet = spreadsheet.getSheetByName('ClientDistances');
+      if (sheet) {
+        const lastRow = sheet.getLastRow();
+        if (lastRow > 1) {
+          sheet.deleteRows(2, lastRow - 1);
+          distanceDebugLog('Cleared existing client distances');
+        }
+      } else {
+        console.warn('ClientDistances sheet not found - creating new one');
+        sheet = spreadsheet.insertSheet('ClientDistances');
+        sheet.appendRow(['SourceClientID', 'TargetClientID', 'DistanceMiles', 'TravelMinutes', 'DistanceText', 'DurationText']);
+      }
+      
+      const results = [];
+      let apiCallCount = 0;
+      const batchSize = 10; // Smaller batch to avoid rate limits
+      
+      for (let i = 0; i < clients.length; i += batchSize) {
+        const sourceBatch = clients.slice(i, i + batchSize);
+        
+        for (let j = 0; j < clients.length; j += batchSize) {
+          if (i === j) continue; // Skip same batch to avoid self-distances
+          
+          const targetBatch = clients.slice(j, j + batchSize);
+          
+          // Calculate batch distances
+          sourceBatch.forEach(sourceClient => {
+            targetBatch.forEach(targetClient => {
+              if (sourceClient.id === targetClient.id) return;
+              
+              try {
+                // Rate limiting delay
+                if (apiCallCount > 0) {
+                  Utilities.sleep(500); // Increased delay
+                }
+                
+                const travelTime = this.calculateClientToClientTravelTime(sourceClient, targetClient);
+                
+                results.push({
+                  sourceClientId: sourceClient.id,
+                  targetClientId: targetClient.id,
+                  distanceMiles: travelTime.distanceInMiles,
+                  travelMinutes: travelTime.durationInMinutes,
+                  distanceText: travelTime.distanceText,
+                  durationText: travelTime.durationText
+                });
+                
+                apiCallCount++;
+                
+                if (apiCallCount % 10 === 0) {
+                  distanceDebugLog(`Progress: ${apiCallCount} calculations completed`);
+                }
+              } catch (error) {
+                console.error(`Failed calculation from ${sourceClient.id} to ${targetClient.id}:`, error);
+                // Skip adding fallback record
+              }
+            });
+          });
+          
+          // Batch delay
+          Utilities.sleep(2000);
+        }
+      }
+      
+      // Store results
+      this.addClientDistanceRecords(results);
+      
+      distanceDebugLog(`Completed: ${results.length} distances calculated`);
+      return results;
+      
+    } catch (error) {
+      console.error('Error in calculateAllClientToClientDistances:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Calculate distances from one source client to all other clients
+   * @param {number} sourceClientId - ID of the source client
+   * @returns {Array} Array of distance records
+   */
+  static calculateDistancesForClient(sourceClientId) {
+    distanceDebugLog(`Calculating distances from source client ${sourceClientId} to all other clients`);
+    
+    try {
+      const clients = SheetsService.getClientsData();
+      const sourceClient = clients.find(c => Number(c.id) === Number(sourceClientId));
+      
+      if (!sourceClient) {
+        throw new Error(`Source client ${sourceClientId} not found`);
+      }
+      
+      const otherClients = clients.filter(c => Number(c.id) !== Number(sourceClientId));
+      
+      if (otherClients.length === 0) {
+        console.warn('No other clients found for distance calculation');
+        return [];
+      }
+      
+      distanceDebugLog(`Calculating distances to ${otherClients.length} other clients`);
+      
+      const results = [];
+      
+      // Process in batches to avoid API limits
+      const batchSize = 25;
+      for (let i = 0; i < otherClients.length; i += batchSize) {
+        const batch = otherClients.slice(i, i + batchSize);
+        
+        batch.forEach((targetClient, index) => {
+          try {
+            // Add delay
+            if (index > 0) {
+              Utilities.sleep(1000);
+            }
+            
+            const travelTime = this.calculateClientToClientTravelTime(sourceClient, targetClient);
+            
+            results.push({
+              sourceClientId: sourceClientId,
+              targetClientId: targetClient.id,
+              distanceInMiles: travelTime.distanceInMiles,
+              durationInMinutes: travelTime.durationInMinutes,
+              distanceText: travelTime.distanceText,
+              durationText: travelTime.durationText
+            });
+          } catch (error) {
+            console.error(`Failed to calculate for target ${targetClient.id}:`, error);
+            results.push({
+              sourceClientId: sourceClientId,
+              targetClientId: targetClient.id,
+              distanceInMiles: 0,
+              durationInMinutes: 0,
+              distanceText: '0 mi',
+              durationText: '0 mins'
+            });
+          }
+        });
+        
+        // Delay between batches
+        if (i + batchSize < otherClients.length) {
+          Utilities.sleep(5000);
+        }
+      }
+      
+      // Store results
+      this.addClientDistanceRecords(results);
+      
+      distanceDebugLog(`Completed calculations: ${results.length} distances`);
+      return results;
+      
+    } catch (error) {
+      console.error('Error in calculateDistancesForClient:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Add client distance records to the ClientDistances sheet
+   * @param {Array} distanceResults - Array of distance calculation results
+   */
+  static addClientDistanceRecords(distanceResults) {
+    try {
+      const sheet = SheetsService.getSpreadsheet().getSheetByName('ClientDistances');
+      
+      if (!sheet) {
+        throw new Error('ClientDistances sheet not found. Please create it first.');
+      }
+      
+      // Prepare data for batch insert
+      const rows = distanceResults.map(result => [
+        result.sourceClientId,
+        result.targetClientId,
+        result.distanceInMiles,
+        result.durationInMinutes,
+        result.distanceText,
+        result.durationText
+      ]);
+      
+      if (rows.length > 0) {
+        // Append all rows at once for better performance
+        sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, 6).setValues(rows);
+        distanceDebugLog(`Added ${rows.length} client distance records to ClientDistances sheet`);
+      }
+      
+    } catch (error) {
+      console.error('Error adding client distance records:', error);
+      // Don't throw - this is not critical for the main operation
+    }
+  }
+  
+  /**
+   * Get clients ranked by proximity to a source client
+   * @param {number} sourceClientId - The source client ID
+   * @param {number} maxDistance - Maximum distance in minutes (default: 15)
+   * @returns {Array} Array of clients sorted by travel time
+   */
+  static getProximityRankedClients(sourceClientId, maxDistance = 15) {
+    distanceDebugLog(`Getting proximity-ranked clients for source client ${sourceClientId} within ${maxDistance} minutes`);
+    
+    try {
+      const sheet = SheetsService.getSpreadsheet().getSheetByName('ClientDistances');
+      
+      if (!sheet) {
+        console.warn('ClientDistances sheet not found');
+        return [];
+      }
+      
+      const data = sheet.getDataRange().getValues();
+      const clients = SheetsService.getClientsData();
+      
+      // Find all distances from the source client
+      const proximityData = [];
+      
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        const [sourceId, targetId, distanceMiles, durationMinutes, distanceText, durationText] = row;
+        
+        if (Number(sourceId) === Number(sourceClientId) && durationMinutes <= maxDistance) {
+          // Find the target client data
+          const targetClient = clients.find(c => Number(c.id) === Number(targetId));
+          
+          if (targetClient) {
+            proximityData.push({
+              clientId: targetId,
+              clientName: targetClient.name,
+              distanceInMiles: distanceMiles,
+              durationInMinutes: durationMinutes,
+              distanceText: distanceText,
+              durationText: durationText,
+              lat: targetClient.lat,
+              lng: targetClient.lng
+            });
+          }
+        }
+      }
+      
+      // Sort by travel time (ascending)
+      proximityData.sort((a, b) => a.durationInMinutes - b.durationInMinutes);
+      
+      distanceDebugLog(`Found ${proximityData.length} clients within ${maxDistance} minutes of client ${sourceClientId}`);
+      return proximityData;
+      
+    } catch (error) {
+      console.error('Error getting proximity-ranked clients:', error);
+      return [];
+    }
+  }
+  
+  /**
+   * Initialize client distances for first-time setup
+   * This is a convenience method for manual initialization
+   */
+  static initializeClientDistances() {
+    distanceDebugLog('Initializing client-to-client distances...');
+    
+    try {
+      // Check if ClientDistances sheet exists
+      const sheet = SheetsService.getSpreadsheet().getSheetByName('ClientDistances');
+      
+      if (!sheet) {
+        throw new Error('ClientDistances sheet not found. Please create it first with headers: SourceClientID | TargetClientID | DistanceMiles | TravelMinutes | DistanceText | DurationText');
+      }
+      
+      // Clear existing data (keep headers)
+      const lastRow = sheet.getLastRow();
+      if (lastRow > 1) {
+        sheet.deleteRows(2, lastRow - 1);
+        distanceDebugLog('Cleared existing client distance data');
+      }
+      
+      // Calculate all distances
+      const results = this.calculateAllClientToClientDistances();
+      
+      distanceDebugLog(`Client distance initialization complete: ${results.length} distance calculations stored`);
+      return {
+        success: true,
+        calculationsStored: results.length,
+        message: 'Client-to-client distances initialized successfully'
+      };
+      
+    } catch (error) {
+      console.error('Error initializing client distances:', error);
+      return {
+        success: false,
+        error: error.message,
+        message: 'Failed to initialize client distances'
+      };
+    }
+  }
+}
+
+/**
+ * Backend API function to initialize client-to-client distances
+ * Called from the frontend website
+ */
+function initializeClientDistancesAPI() {
+  console.log('[API] Starting client distance initialization from frontend request');
+  
+  try {
+    // Get client count for progress estimation
+    const clients = SheetsService.getClientsData();
+    const clientCount = clients.length;
+    const expectedCalculations = clientCount * (clientCount - 1);
+    
+    console.log(`[API] Found ${clientCount} clients, expecting ${expectedCalculations} distance calculations`);
+    
+    if (clientCount < 2) {
+      return {
+        success: false,
+        error: 'Need at least 2 clients for distance calculations',
+        clientCount: clientCount,
+        expectedCalculations: 0
+      };
+    }
+    
+    // Check if ClientDistances sheet exists
+    const spreadsheet = SheetsService.getSpreadsheet();
+    let sheet = spreadsheet.getSheetByName('ClientDistances');
+    
+    if (!sheet) {
+      // Create the sheet if it doesn't exist
+      console.log('[API] Creating ClientDistances sheet...');
+      sheet = spreadsheet.insertSheet('ClientDistances');
+      
+      // Add headers
+      sheet.getRange(1, 1, 1, 6).setValues([[
+        'SourceClientID', 'TargetClientID', 'DistanceMiles', 'TravelMinutes', 'DistanceText', 'DurationText'
+      ]]);
+      
+      // Format headers
+      const headerRange = sheet.getRange(1, 1, 1, 6);
+      headerRange.setFontWeight('bold');
+      headerRange.setBackground('#f0f0f0');
+      
+      console.log('[API] Created ClientDistances sheet with headers');
+    }
+    
+    // Clear existing data (keep headers)
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.deleteRows(2, lastRow - 1);
+      console.log('[API] Cleared existing client distance data');
+    }
+    
+    // Start the calculation process
+    console.log('[API] Starting distance calculations...');
+    const startTime = Date.now();
+    
+    const result = DistanceService.initializeClientDistances();
+    
+    const endTime = Date.now();
+    const durationSeconds = Math.round((endTime - startTime) / 1000);
+    
+    console.log(`[API] Distance calculations completed in ${durationSeconds} seconds`);
+    
+    return {
+      success: result.success,
+      clientCount: clientCount,
+      expectedCalculations: expectedCalculations,
+      actualCalculations: result.calculationsStored || 0,
+      durationSeconds: durationSeconds,
+      message: result.message,
+      error: result.error || null,
+      timestamp: new Date().toISOString()
+    };
+    
+  } catch (error) {
+    console.error('[API] Error in initializeClientDistancesAPI:', error);
+    
+    return {
+      success: false,
+      error: error.message,
+      message: 'Failed to initialize client distances',
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
+/**
+ * Backend API function to get current client distance statistics
+ */
+function getClientDistanceStats() {
+  console.log('[API] Getting client distance statistics');
+  
+  try {
+    const clients = SheetsService.getClientsData();
+    const clientCount = clients.length;
+    const expectedCalculations = clientCount * (clientCount - 1);
+    
+    // Check ClientDistances sheet
+    const sheet = SheetsService.getSpreadsheet().getSheetByName('ClientDistances');
+    let currentCalculations = 0;
+    let lastUpdated = null;
+    
+    if (sheet) {
+      const data = sheet.getDataRange().getValues();
+      currentCalculations = Math.max(0, data.length - 1); // Subtract header row
+      
+      // Try to get last modified time (approximate)
+      lastUpdated = sheet.getLastRow() > 1 ? 'Available' : 'No data';
+    }
+    
+    return {
+      success: true,
+      clientCount: clientCount,
+      expectedCalculations: expectedCalculations,
+      currentCalculations: currentCalculations,
+      completionPercentage: expectedCalculations > 0 ? Math.round((currentCalculations / expectedCalculations) * 100) : 0,
+      isComplete: currentCalculations >= expectedCalculations && expectedCalculations > 0,
+      lastUpdated: lastUpdated,
+      sheetExists: !!sheet
+    };
+    
+  } catch (error) {
+    console.error('[API] Error getting client distance stats:', error);
+    
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Backend API function for LIMITED client distance initialization
+ * @param {number} maxClients - Maximum number of clients to process (default: 20)
+ */
+function initializeClientDistancesLimitedAPI(maxClients = 20) {
+  console.log(`[API] Starting LIMITED client distance initialization with ${maxClients} clients`);
+  
+  try {
+    // Get limited client data
+    const allClients = SheetsService.getClientsData();
+    const limitedClients = allClients.slice(0, maxClients);
+    const clientCount = limitedClients.length;
+    const expectedCalculations = clientCount * (clientCount - 1);
+    
+    console.log(`[API] Limited test: Processing ${clientCount} clients, expecting ${expectedCalculations} calculations`);
+    
+    if (clientCount < 2) {
+      return {
+        success: false,
+        error: 'Need at least 2 clients for distance calculations',
+        clientCount: clientCount,
+        expectedCalculations: 0
+      };
+    }
+    
+    // Check/create ClientDistances sheet
+    const spreadsheet = SheetsService.getSpreadsheet();
+    let sheet = spreadsheet.getSheetByName('ClientDistances');
+    
+    if (!sheet) {
+      console.log('[API] Creating ClientDistances sheet...');
+      sheet = spreadsheet.insertSheet('ClientDistances');
+      
+      // Add headers
+      sheet.getRange(1, 1, 1, 6).setValues([[
+        'SourceClientID', 'TargetClientID', 'DistanceMiles', 'TravelMinutes', 'DistanceText', 'DurationText'
+      ]]);
+      
+      // Format headers
+      const headerRange = sheet.getRange(1, 1, 1, 6);
+      headerRange.setFontWeight('bold');
+      headerRange.setBackground('#f0f0f0');
+    }
+    
+    // Clear existing data for these clients
+    console.log('[API] Clearing existing data for limited client set...');
+    const data = sheet.getDataRange().getValues();
+    const limitedClientIds = limitedClients.map(c => String(c.id));
+    
+    // Remove rows that involve any of our limited clients
+    for (let i = data.length - 1; i >= 1; i--) {
+      const sourceId = String(data[i][0]);
+      const targetId = String(data[i][1]);
+      
+      if (limitedClientIds.includes(sourceId) || limitedClientIds.includes(targetId)) {
+        sheet.deleteRow(i + 1);
+      }
+    }
+    
+    // 🎯 KEY IMPROVEMENT: Use our working calculateDistancesForClient approach
+    console.log('[API] Starting LIMITED distance calculations using working approach...');
+    const startTime = Date.now();
+    
+    const allResults = [];
+    let apiCallCount = 0;
+    
+    // Process each client using our working DistanceService.calculateDistancesForClient approach
+    for (let i = 0; i < limitedClients.length; i++) {
+      const sourceClient = limitedClients[i];
+      
+      try {
+        console.log(`[API] LIMITED: Processing client ${i+1}/${limitedClients.length}: ${sourceClient.name}`);
+        
+        // Use our working DistanceService.calculateDistancesForClient approach
+        // but only for the limited client set
+        const otherLimitedClients = limitedClients.filter(c => c.id !== sourceClient.id);
+        
+        for (const targetClient of otherLimitedClients) {
+          try {
+            // Add delay to respect API rate limits
+            if (apiCallCount > 0) {
+              Utilities.sleep(200); // 200ms delay
+            }
+            
+            const travelTime = DistanceService.calculateClientToClientTravelTime(sourceClient, targetClient);
+            
+            allResults.push({
+              sourceClientId: sourceClient.id,
+              targetClientId: targetClient.id,
+              distanceInMiles: travelTime.distanceInMiles,
+              durationInMinutes: travelTime.durationInMinutes,
+              distanceText: travelTime.distanceText,
+              durationText: travelTime.durationText
+            });
+            
+            apiCallCount++;
+            
+            // Log progress every 20 calculations
+            if (apiCallCount % 20 === 0) {
+              console.log(`[API] LIMITED: ${apiCallCount} API calls completed`);
+            }
+            
+          } catch (error) {
+            console.error(`[API] Failed LIMITED calculation from client ${sourceClient.id} to ${targetClient.id}:`, error);
+            
+            allResults.push({
+              sourceClientId: sourceClient.id,
+              targetClientId: targetClient.id,
+              distanceInMiles: 0,
+              durationInMinutes: 0,
+              distanceText: "0 mi",
+              durationText: "0 mins"
+            });
+          }
+        }
+        
+      } catch (clientError) {
+        console.error(`[API] Error processing client ${sourceClient.id}:`, clientError);
+        
+        // Add fallback results for this client
+        const otherLimitedClients = limitedClients.filter(c => c.id !== sourceClient.id);
+        otherLimitedClients.forEach(targetClient => {
+          allResults.push({
+            sourceClientId: sourceClient.id,
+            targetClientId: targetClient.id,
+            distanceInMiles: 0,
+            durationInMinutes: 0,
+            distanceText: "0 mi",
+            durationText: "0 mins"
+          });
+        });
+      }
+    }
+    
+    // Store results
+    DistanceService.addClientDistanceRecords(allResults);
+    
+    const endTime = Date.now();
+    const durationSeconds = Math.round((endTime - startTime) / 1000);
+    
+    console.log(`[API] LIMITED distance calculations completed in ${durationSeconds} seconds`);
+    
+    return {
+      success: true,
+      mode: 'limited',
+      clientCount: clientCount,
+      totalClients: allClients.length,
+      expectedCalculations: expectedCalculations,
+      actualCalculations: allResults.length,
+      apiCallsUsed: apiCallCount,
+      durationSeconds: durationSeconds,
+      message: `LIMITED test completed: ${clientCount} clients processed`,
+      timestamp: new Date().toISOString()
+    };
+    
+  } catch (error) {
+    console.error('[API] Error in initializeClientDistancesLimitedAPI:', error);
+    
+    return {
+      success: false,
+      mode: 'limited',
+      error: error.message,
+      message: 'Failed to initialize limited client distances',
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
+/**
+ * Backend API function for CHUNKED client distance initialization
+ * @param {number} chunkSize - Number of clients to process in this chunk (default: 15)
+ * @param {number} startIndex - Starting client index (default: 0)
+ */
+function initializeClientDistancesChunkedAPI(chunkSize = 15, startIndex = 0) {
+  console.log(`[API] Starting CHUNKED client distance initialization: chunk size ${chunkSize}, start index ${startIndex}`);
+  
+  try {
+    const allClients = SheetsService.getClientsData();
+    const totalClients = allClients.length;
+    
+    // Get the chunk of clients to process
+    const endIndex = Math.min(startIndex + chunkSize, totalClients);
+    const chunkClients = allClients.slice(startIndex, endIndex);
+    const actualChunkSize = chunkClients.length;
+    
+    console.log(`[API] Processing chunk: clients ${startIndex} to ${endIndex-1} (${actualChunkSize} clients)`);
+    
+    if (actualChunkSize === 0) {
+      return {
+        success: true,
+        mode: 'chunked',
+        chunkComplete: true,
+        allComplete: true,
+        message: 'No more clients to process - all chunks complete'
+      };
+    }
+    
+    // Check/create ClientDistances sheet
+    const spreadsheet = SheetsService.getSpreadsheet();
+    let sheet = spreadsheet.getSheetByName('ClientDistances');
+    
+    if (!sheet) {
+      console.log('[API] Creating ClientDistances sheet...');
+      sheet = spreadsheet.insertSheet('ClientDistances');
+      
+      // Add headers
+      sheet.getRange(1, 1, 1, 6).setValues([[
+        'SourceClientID', 'TargetClientID', 'DistanceMiles', 'TravelMinutes', 'DistanceText', 'DurationText'
+      ]]);
+      
+      // Format headers
+      const headerRange = sheet.getRange(1, 1, 1, 6);
+      headerRange.setFontWeight('bold');
+      headerRange.setBackground('#f0f0f0');
+    }
+    
+    // Calculate distances for this chunk
+    const startTime = Date.now();
+    const results = [];
+    let apiCallCount = 0;
+    
+    // For each client in this chunk, calculate distances to ALL other clients
+    for (let i = 0; i < chunkClients.length; i++) {
+      const sourceClient = chunkClients[i];
+      
+      for (let j = 0; j < allClients.length; j++) {
+        const targetClient = allClients[j];
+        
+        if (sourceClient.id === targetClient.id) continue; // Skip same client
+        
+        // Check if this calculation already exists
+        const existingData = sheet.getDataRange().getValues();
+        const alreadyExists = existingData.some((row, index) => {
+          if (index === 0) return false; // Skip header
+          return String(row[0]) === String(sourceClient.id) && String(row[1]) === String(targetClient.id);
+        });
+        
+        if (alreadyExists) {
+          console.log(`[API] Skipping existing calculation: ${sourceClient.id} -> ${targetClient.id}`);
+          continue;
+        }
+        
+        try {
+          // Add delay to respect API rate limits
+          if (apiCallCount > 0) {
+            Utilities.sleep(200); // 200ms delay
+          }
+          
+          const travelTime = DistanceService.calculateClientToClientTravelTime(sourceClient, targetClient);
+          
+          results.push({
+            sourceClientId: sourceClient.id,
+            targetClientId: targetClient.id,
+            distanceInMiles: travelTime.distanceInMiles,
+            durationInMinutes: travelTime.durationInMinutes,
+            distanceText: travelTime.distanceText,
+            durationText: travelTime.durationText
+          });
+          
+          apiCallCount++;
+          
+          // Log progress every 25 calculations
+          if (apiCallCount % 25 === 0) {
+            console.log(`[API] CHUNKED: ${apiCallCount} API calls completed in this chunk`);
+          }
+          
+        } catch (error) {
+          console.error(`[API] Failed CHUNKED calculation from ${sourceClient.id} to ${targetClient.id}:`, error);
+          
+          results.push({
+            sourceClientId: sourceClient.id,
+            targetClientId: targetClient.id,
+            distanceInMiles: 0,
+            durationInMinutes: 0,
+            distanceText: "0 mi",
+            durationText: "0 mins"
+          });
+        }
+      }
+    }
+    
+    // Store results for this chunk
+    if (results.length > 0) {
+      DistanceService.addClientDistanceRecords(results);
+    }
+    
+    const endTime = Date.now();
+    const durationSeconds = Math.round((endTime - startTime) / 1000);
+    
+    // Calculate progress
+    const nextStartIndex = endIndex;
+    const isAllComplete = nextStartIndex >= totalClients;
+    const progressPercentage = Math.round((nextStartIndex / totalClients) * 100);
+    
+    console.log(`[API] CHUNKED calculation completed: ${results.length} new calculations, ${durationSeconds} seconds`);
+    
+    return {
+      success: true,
+      mode: 'chunked',
+      chunkComplete: true,
+      allComplete: isAllComplete,
+      currentChunk: {
+        startIndex: startIndex,
+        endIndex: endIndex,
+        size: actualChunkSize,
+        calculations: results.length,
+        apiCalls: apiCallCount,
+        durationSeconds: durationSeconds
+      },
+      progress: {
+        clientsProcessed: nextStartIndex,
+        totalClients: totalClients,
+        percentage: progressPercentage,
+        nextStartIndex: isAllComplete ? null : nextStartIndex
+      },
+      message: isAllComplete ? 
+        `All chunks complete! Processed ${totalClients} clients total.` :
+        `Chunk complete: processed clients ${startIndex}-${endIndex-1}. Next chunk starts at ${nextStartIndex}`,
+      timestamp: new Date().toISOString()
+    };
+    
+  } catch (error) {
+    console.error('[API] Error in initializeClientDistancesChunkedAPI:', error);
+    
+    return {
+      success: false,
+      mode: 'chunked',
+      error: error.message,
+      message: 'Failed to process chunked client distances',
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+
+/**
+ * Backend API function to test proximity ranking
+ * @param {number} clientId - Client ID to test proximity for
+ */
+function testProximityRanking(clientId) {
+  console.log(`[API] Testing proximity ranking for client ${clientId}`);
+  
+  try {
+    const proximityResults = DistanceService.getProximityRankedClients(clientId, 15);
+    
+    return {
+      success: true,
+      sourceClientId: clientId,
+      proximityResults: proximityResults,
+      resultCount: proximityResults.length,
+      message: `Found ${proximityResults.length} clients within 15 minutes`
+    };
+    
+  } catch (error) {
+    console.error('[API] Error testing proximity ranking:', error);
+    
+    return {
+      success: false,
+      error: error.message,
+      message: 'Failed to test proximity ranking'
+    };
+  }
+}
+
+/**
+ * Backend API function to verify no duplicate calculations exist
+ */
+function verifyNoDuplicatesAPI() {
+  console.log('[API] Verifying no duplicate calculations exist...');
+  
+  try {
+    const sheet = SheetsService.getSpreadsheet().getSheetByName('ClientDistances');
+    
+    if (!sheet) {
+      return {
+        success: false,
+        error: 'ClientDistances sheet not found'
+      };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const calculations = data.slice(1); // Remove header
+    
+    // Create a Set to track unique source->target pairs
+    const seenPairs = new Set();
+    const duplicates = [];
+    
+    calculations.forEach((row, index) => {
+      const sourceId = String(row[0]);
+      const targetId = String(row[1]);
+      const pairKey = `${sourceId}->${targetId}`;
+      
+      if (seenPairs.has(pairKey)) {
+        duplicates.push({
+          rowIndex: index + 2, // +2 for header and 0-based index
+          sourceId: sourceId,
+          targetId: targetId,
+          pairKey: pairKey
+        });
+      } else {
+        seenPairs.add(pairKey);
+      }
+    });
+    
+    return {
+      success: true,
+      totalCalculations: calculations.length,
+      uniquePairs: seenPairs.size,
+      duplicateCount: duplicates.length,
+      duplicates: duplicates.slice(0, 10), // First 10 duplicates for inspection
+      hasDuplicates: duplicates.length > 0,
+      message: duplicates.length === 0 ? 
+        'No duplicates found - all calculations are unique' :
+        `Found ${duplicates.length} duplicate calculations`
+    };
+    
+  } catch (error) {
+    console.error('[API] Error verifying duplicates:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Backend API function to find the optimal starting point for chunked processing
+ */
+function getOptimalChunkStartAPI() {
+  console.log('[API] Finding optimal starting point for chunked processing...');
+  
+  try {
+    const allClients = SheetsService.getClientsData();
+    const totalClients = allClients.length;
+    
+    const sheet = SheetsService.getSpreadsheet().getSheetByName('ClientDistances');
+    
+    if (!sheet) {
+      return {
+        success: true,
+        optimalStartIndex: 0,
+        message: 'No ClientDistances sheet found - start from beginning'
+      };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const calculations = data.slice(1); // Remove header
+    
+    // Count how many outbound calculations each client has
+    const clientCalculationCounts = {};
+    const expectedPerClient = totalClients - 1; // Each client should have (totalClients - 1) outbound calculations
+    
+    // Initialize all clients with 0 calculations
+    allClients.forEach(client => {
+      clientCalculationCounts[String(client.id)] = 0;
+    });
+    
+    // Count existing calculations
+    calculations.forEach(row => {
+      const sourceId = String(row[0]);
+      if (clientCalculationCounts.hasOwnProperty(sourceId)) {
+        clientCalculationCounts[sourceId]++;
+      }
+    });
+    
+    // Find the first client that doesn't have all expected calculations
+    let optimalStartIndex = totalClients; // Default to end (all complete)
+    
+    for (let i = 0; i < allClients.length; i++) {
+      const clientId = String(allClients[i].id);
+      const actualCount = clientCalculationCounts[clientId] || 0;
+      
+      if (actualCount < expectedPerClient) {
+        optimalStartIndex = i;
+        console.log(`[API] Found incomplete client at index ${i}: client ${clientId} has ${actualCount}/${expectedPerClient} calculations`);
+        break;
+      }
+    }
+    
+    // Calculate completion stats
+    const completedClients = Object.values(clientCalculationCounts).filter(count => count >= expectedPerClient).length;
+    const totalExpected = totalClients * expectedPerClient;
+    const actualCalculations = calculations.length;
+    
+    return {
+      success: true,
+      optimalStartIndex: optimalStartIndex,
+      completedClients: completedClients,
+      totalClients: totalClients,
+      clientProgress: Math.round((completedClients / totalClients) * 100),
+      calculationProgress: Math.round((actualCalculations / totalExpected) * 100),
+      expectedPerClient: expectedPerClient,
+      clientDetails: Object.entries(clientCalculationCounts).slice(optimalStartIndex, optimalStartIndex + 5).map(([clientId, count]) => ({
+        clientId: clientId,
+        calculationsComplete: count,
+        calculationsExpected: expectedPerClient,
+        isComplete: count >= expectedPerClient
+      })),
+      message: optimalStartIndex >= totalClients ? 
+        'All clients appear to be complete!' :
+        `Optimal restart point: client index ${optimalStartIndex} (${completedClients}/${totalClients} clients complete)`
+    };
+    
+  } catch (error) {
+    console.error('[API] Error finding optimal chunk start:', error);
+    return {
+      success: false,
+      error: error.message
+    };
+  }
+}
+
+/**
+ * Backend API function to identify clients with no distance records (new clients)
+ */
+function identifyNewClientsAPI() {
+  console.log('[API] Identifying clients with no distance records...');
+  
+  try {
+    const allClients = SheetsService.getClientsData();
+    const totalClients = allClients.length;
+    
+    const sheet = SheetsService.getSpreadsheet().getSheetByName('ClientDistances');
+    
+    if (!sheet) {
+      // No sheet means all clients are "new"
+      return {
+        success: true,
+        totalClients: totalClients,
+        newClientIds: allClients.map(c => c.id),
+        newClientsCount: totalClients,
+        message: totalClients === 0 ? 'No clients found' : `All ${totalClients} clients are new (no ClientDistances sheet exists)`
+      };
+    }
+    
+    const data = sheet.getDataRange().getValues();
+    const calculations = data.slice(1); // Remove header
+    
+    // Count how many outbound calculations each client has
+    const clientCalculationCounts = {};
+    
+    // Initialize all clients with 0 calculations
+    allClients.forEach(client => {
+      clientCalculationCounts[String(client.id)] = 0;
+    });
+    
+    // Count existing calculations where client is the SOURCE
+    calculations.forEach(row => {
+      const sourceId = String(row[0]);
+      if (clientCalculationCounts.hasOwnProperty(sourceId)) {
+        clientCalculationCounts[sourceId]++;
+      }
+    });
+    
+    // Find clients with zero distance records
+    const newClientIds = [];
+    const newClientDetails = [];
+    
+    allClients.forEach(client => {
+      const clientId = String(client.id);
+      const calculationCount = clientCalculationCounts[clientId] || 0;
+      
+      if (calculationCount === 0) {
+        newClientIds.push(client.id);
+        newClientDetails.push({
+          id: client.id,
+          name: client.name || `Client ${client.id}`,
+          address: client.address || 'No address',
+          calculationCount: calculationCount
+        });
+      }
+    });
+    
+    console.log(`[API] Found ${newClientIds.length} clients with no distance records out of ${totalClients} total clients`);
+    
+    return {
+      success: true,
+      totalClients: totalClients,
+      newClientIds: newClientIds,
+      newClientsCount: newClientIds.length,
+      newClientDetails: newClientDetails.slice(0, 10), // First 10 for display
+      message: newClientIds.length === 0 ? 
+        'No new clients found - all clients have distance records' :
+        `Found ${newClientIds.length} clients with no distance records`
+    };
+    
+  } catch (error) {
+    console.error('[API] Error identifying new clients:', error);
+    return {
+      success: false,
+      error: error.message,
+      message: 'Failed to identify new clients'
+    };
+  }
+}
+
+/**
+ * Backend API function to initialize distances for new clients only
+ */
+function initializeNewClientsDistancesAPI() {
+  console.log('[API] Starting distance calculations for new clients only...');
+  
+  try {
+    // First, identify which clients are new
+    const identificationResult = identifyNewClientsAPI();
+    
+    if (!identificationResult.success) {
+      throw new Error(identificationResult.error || 'Failed to identify new clients');
+    }
+    
+    if (identificationResult.newClientsCount === 0) {
+      return {
+        success: true,
+        mode: 'new_clients_only',
+        newClientsProcessed: 0,
+        calculationsCompleted: 0,
+        apiCallsUsed: 0,
+        durationSeconds: 0,
+        message: 'No new clients found - all clients already have distance records',
+        timestamp: new Date().toISOString()
+      };
+    }
+    
+    console.log(`[API] Processing ${identificationResult.newClientsCount} new clients...`);
+    
+    // Get all clients data for calculating distances TO all existing clients
+    const allClients = SheetsService.getClientsData();
+    const newClientIds = identificationResult.newClientIds;
+    
+    // Check/create ClientDistances sheet
+    const spreadsheet = SheetsService.getSpreadsheet();
+    let sheet = spreadsheet.getSheetByName('ClientDistances');
+    
+    if (!sheet) {
+      console.log('[API] Creating ClientDistances sheet...');
+      sheet = spreadsheet.insertSheet('ClientDistances');
+      
+      // Add headers
+      sheet.getRange(1, 1, 1, 6).setValues([[
+        'SourceClientID', 'TargetClientID', 'DistanceMiles', 'TravelMinutes', 'DistanceText', 'DurationText'
+      ]]);
+      
+      // Format headers
+      const headerRange = sheet.getRange(1, 1, 1, 6);
+      headerRange.setFontWeight('bold');
+      headerRange.setBackground('#f0f0f0');
+    }
+    
+    // Process each new client using existing DistanceService.calculateDistancesForClient
+    const startTime = Date.now();
+    let allResults = [];
+    let totalApiCalls = 0;
+    
+    for (let i = 0; i < newClientIds.length; i++) {
+      const newClientId = newClientIds[i];
+      
+      try {
+        console.log(`[API] Processing new client ${i + 1}/${newClientIds.length}: ID ${newClientId}`);
+        
+        // Use the existing working calculateDistancesForClient function
+        const clientResults = DistanceService.calculateDistancesForClient(newClientId);
+        
+        allResults = allResults.concat(clientResults);
+        
+        // Estimate API calls (one call per target client)
+        const targetClientCount = allClients.length - 1; // Exclude the source client itself
+        totalApiCalls += targetClientCount;
+        
+        console.log(`[API] Completed new client ${newClientId}: ${clientResults.length} distance calculations`);
+        
+      } catch (clientError) {
+        console.error(`[API] Error processing new client ${newClientId}:`, clientError);
+        
+        // Add fallback results for this client
+        const otherClients = allClients.filter(c => Number(c.id) !== Number(newClientId));
+        otherClients.forEach(targetClient => {
+          allResults.push({
+            sourceClientId: newClientId,
+            targetClientId: targetClient.id,
+            distanceInMiles: 0,
+            durationInMinutes: 0,
+            distanceText: "0 mi",
+            durationText: "0 mins"
+          });
+        });
+      }
+    }
+    
+    const endTime = Date.now();
+    const durationSeconds = Math.round((endTime - startTime) / 1000);
+    
+    console.log(`[API] New clients distance processing completed: ${allResults.length} calculations in ${durationSeconds} seconds`);
+    
+    return {
+      success: true,
+      mode: 'new_clients_only',
+      newClientsProcessed: newClientIds.length,
+      calculationsCompleted: allResults.length,
+      apiCallsUsed: totalApiCalls,
+      durationSeconds: durationSeconds,
+      newClientDetails: identificationResult.newClientDetails,
+      message: `Successfully processed ${newClientIds.length} new clients with ${allResults.length} distance calculations`,
+      timestamp: new Date().toISOString()
+    };
+    
+  } catch (error) {
+    console.error('[API] Error in initializeNewClientsDistancesAPI:', error);
+    
+    return {
+      success: false,
+      mode: 'new_clients_only',
+      error: error.message,
+      message: 'Failed to initialize distances for new clients',
+      timestamp: new Date().toISOString()
+    };
+  }
+} 
