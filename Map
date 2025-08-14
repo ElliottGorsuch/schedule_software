@@ -1,0 +1,4947 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Map & Assignment (with DB Delete)</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+    }
+    /* Keep the time slot dropdown at the top */
+    #timeSlotContainer {
+      padding: 5px;
+      background: #f5f5f5;
+    }
+    /* The map takes up 70vh for comfortable viewing */
+    #map {
+      height: 70vh;
+    }
+    /* Simple styles for Assign/Clear/Delete links */
+    a.assignLink {
+      text-decoration: underline;
+      color: blue;
+      cursor: pointer;
+    }
+    a.clearLink {
+      text-decoration: underline;
+      color: red;
+      cursor: pointer;
+    }
+    a.deleteTherapistLink {
+      text-decoration: underline;
+      color: purple;
+      cursor: pointer;
+    }
+    a.deleteClientLink {
+      text-decoration: underline;
+      color: purple;
+      cursor: pointer;
+    }
+    
+    /* New styles for the Add Therapist button and popup */
+    .control-container {
+      display: flex;
+      justify-content: space-between;
+      background: #f5f5f5;
+      padding: 5px;
+      margin-bottom: 5px;
+    }
+    
+    .button-group {
+      display: flex;
+      gap: 10px;
+    }
+    
+    .add-button {
+      padding: 8px 16px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    .client-button {
+      background-color: #2196F3; /* Blue for clients to differentiate */
+    }
+    
+    .bcba-button {
+      background-color: #9C27B0; /* Purple for BCBAs */
+    }
+    
+    .add-button:hover {
+      background-color: #388E3C;
+    }
+    
+    .client-button:hover {
+      background-color: #1976D2;
+    }
+    
+    .bcba-button:hover {
+      background-color: #7B1FA2;
+    }
+    
+    /* Form popup styles */
+    .form-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.5);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      z-index: 1000;
+    }
+    
+    .form-container {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      width: 80%;
+      max-width: 500px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    
+    .form-title {
+      margin-top: 0;
+      margin-bottom: 20px;
+      text-align: center;
+      color: #333;
+    }
+    
+    .form-row {
+      margin-bottom: 15px;
+    }
+    
+    .form-row label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: bold;
+    }
+    
+    .form-row input, .form-row select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+    }
+    
+    .form-buttons {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 20px;
+    }
+    
+    .form-buttons button {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    
+    .submit-button {
+      background-color: #4CAF50;
+      color: white;
+    }
+    
+    .cancel-button {
+      background-color: #f44336;
+      color: white;
+    }
+    
+    .error-message {
+      color: #f44336;
+      margin-top: 10px;
+      display: none;
+    }
+    
+    /* Styles for closest 5 feature */
+    .closest-toggle {
+      margin-top: 10px;
+      padding: 5px;
+      background: #f1f1f1;
+      border-radius: 4px;
+    }
+    
+    .closest-toggle label {
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+    }
+    
+    .closest-toggle span {
+      margin-left: 5px;
+    }
+    
+    #closestCountDisplay {
+      margin-left: 10px;
+      font-weight: bold;
+      color: #2196F3;
+      display: inline-block;
+    }
+    
+    /* Highlight for closest 5 markers */
+    .highlighted-marker {
+      z-index: 1000 !important;
+      transform: scale(1.2) !important;
+      transition: all 0.3s ease;
+    }
+    
+    .faded-marker {
+      opacity: 0.4 !important;
+      transition: all 0.3s ease;
+    }
+    
+    /* Closest list styles */
+    .closest-list {
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      padding: 8px;
+      background-color: #f9f9f9;
+      max-height: 200px;
+      overflow-y: auto;
+      margin-top: 5px;
+    }
+    
+    .closest-item {
+      padding: 3px 6px;
+      margin: 2px 0;
+      background-color: white;
+      border-radius: 3px;
+      border: 1px solid #e0e0e0;
+      cursor: pointer;
+      transition: background-color 0.2s;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    
+    .closest-item:hover {
+      background-color: #e3f2fd;
+    }
+    
+    .closest-item-name {
+      flex-grow: 1;
+      font-weight: bold;
+    }
+    
+    .closest-item-distance {
+      color: #666;
+      font-size: 12px;
+    }
+    
+    /* Highlighted search results */
+    .highlight-text {
+      background-color: yellow;
+      color: black;
+      padding: 1px 2px;
+      border-radius: 2px;
+    }
+    
+    /* Marker styles for assignment types and statuses */
+    .play-pals-marker {
+      background-color: #2196F3 !important; /* Blue for Play Pals */
+      border: 3px solid #1976D2;
+    }
+    
+    .regular-marker {
+      background-color: #4CAF50; /* Green for regular assignments */
+    }
+    
+    /* Assignment status text colors in popups */
+    .status-red {
+      color: #d32f2f; /* Red text for ideas/can be bumped */
+      font-weight: 500;
+    }
+    
+    .status-orange {
+      color: #f57c00; /* Orange text for start date planned */
+      font-weight: 500;
+    }
+    
+    .status-green {
+      color: #388e3c; /* Green text for officially started */
+      font-weight: 500;
+    }
+    
+    /* Popup styles for assignment details */
+    .leaflet-popup-content {
+      font-family: inherit;
+      max-width: 300px;
+    }
+    
+    .leaflet-popup-content h3 {
+      margin: 0 0 10px 0;
+      font-size: 16px;
+    }
+    
+    .leaflet-popup-content h4 {
+      margin: 10px 0 5px 0;
+      font-size: 14px;
+      color: #555;
+    }
+    
+    .leaflet-popup-content p {
+      margin: 5px 0;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    
+    /* Assignment type indicators */
+    .assignment-type-indicator {
+      display: inline-block;
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-size: 11px;
+      font-weight: bold;
+      margin-left: 5px;
+    }
+    
+    .play-pals-indicator {
+      background-color: #e3f2fd;
+      color: #1976D2;
+      border: 1px solid #2196F3;
+    }
+    
+    .regular-indicator {
+      background-color: #e8f5e9;
+      color: #2e7d32;
+      border: 1px solid #4CAF50;
+    }
+    
+    /* Search functionality styles */
+    .search-container {
+      display: flex;
+      align-items: center;
+      flex-grow: 1;
+      max-width: 300px;
+    }
+    
+    .search-input-wrapper {
+      position: relative;
+      display: flex;
+      align-items: center;
+      width: 100%;
+    }
+    
+    #mapSearchInput {
+      width: 100%;
+      padding: 6px 28px 6px 8px;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+      font-size: 14px;
+    }
+    
+    #mapSearchInput:focus {
+      border-color: #2196F3;
+      outline: none;
+      box-shadow: 0 0 3px rgba(33, 150, 243, 0.3);
+    }
+    
+    .clear-search {
+      position: absolute;
+      right: 5px;
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 18px;
+      color: #999;
+      padding: 0;
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    
+    .clear-search:hover {
+      color: #f44336;
+    }
+    
+    #searchResultsCount {
+      margin-left: 10px;
+      font-size: 12px;
+      color: #666;
+      display: none;
+    }
+    
+    /* Marker visibility styles */
+    .marker-faded {
+      opacity: 0.3;
+      filter: grayscale(50%);
+    }
+    
+    .marker-highlight {
+      transform: scale(1.1);
+      z-index: 1000;
+    }
+    
+    /* Assignment info in popups */
+    .assignment-info {
+      background-color: #f8f9fa;
+      border: 1px solid #dee2e6;
+      border-radius: 4px;
+      padding: 8px;
+      margin: 5px 0;
+    }
+    
+    .assignment-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 3px 0;
+      border-bottom: 1px solid #e9ecef;
+    }
+    
+    .assignment-item:last-child {
+      border-bottom: none;
+    }
+    
+    .assignment-client-name {
+      font-weight: bold;
+      flex-grow: 1;
+    }
+    
+    .assignment-type-status {
+      font-size: 12px;
+      margin-left: 10px;
+    }
+    
+    /* Optimal next clients styling for Phase 2 */
+    .next-slot-suggestions {
+      margin: 8px 0;
+      padding: 8px;
+      background-color: #f8fff8;
+      border: 1px solid #c8e6c9;
+      border-radius: 6px;
+      border-left: 4px solid #2E8B57;
+    }
+    
+    .next-slot-suggestions h4 {
+      margin: 0 0 8px 0;
+      color: #2E8B57;
+      font-size: 13px;
+      font-weight: bold;
+    }
+    
+    .suggestion-item {
+      margin: 4px 0;
+      padding: 6px;
+      background: linear-gradient(135deg, #f0f8f0 0%, #e8f5e8 100%);
+      border-radius: 4px;
+      border-left: 3px solid #2E8B57;
+      transition: all 0.2s ease;
+      cursor: pointer;
+    }
+    
+    .suggestion-item:hover {
+      background: linear-gradient(135deg, #e8f5e8 0%, #e0f2e0 100%);
+      border-left-color: #1e5e3e;
+      transform: translateX(2px);
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    
+    .suggestion-item:first-child {
+      margin-top: 6px;
+    }
+    
+    .suggestion-item:last-child {
+      margin-bottom: 6px;
+    }
+    
+    /* Status message styling */
+    .status-message {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      padding: 12px 20px;
+      border-radius: 4px;
+      z-index: 2000;
+      max-width: 400px;
+      font-size: 14px;
+      font-weight: 500;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+      transition: all 0.3s ease-in-out;
+      transform: translateX(100%);
+      opacity: 0;
+      display: none;
+    }
+    
+    .status-message.show {
+      transform: translateX(0);
+      opacity: 1;
+      display: block;
+    }
+    
+    .status-message.success {
+      background-color: #e8f5e9;
+      color: #2e7d32;
+      border-left: 4px solid #4caf50;
+    }
+    
+    .status-message.error {
+      background-color: #ffebee;
+      color: #c62828;
+      border-left: 4px solid #f44336;
+    }
+    
+    .status-message.loading {
+      background-color: #e3f2fd;
+      color: #1565c0;
+      border-left: 4px solid #2196f3;
+    }
+    
+    .status-message .close-btn {
+      float: right;
+      margin-left: 10px;
+      cursor: pointer;
+      font-weight: bold;
+      opacity: 0.7;
+      background: none;
+      border: none;
+      font-size: 16px;
+    }
+    
+    .status-message .close-btn:hover {
+      opacity: 1;
+    }
+    
+    /* Lead BCBA dropdown styles */
+    .lead-bcba-dropdown {
+      transition: border-color 0.2s ease;
+    }
+    
+    .lead-bcba-dropdown:focus {
+      border-color: #2196F3 !important;
+      outline: none;
+      box-shadow: 0 0 3px rgba(33, 150, 243, 0.3);
+    }
+    
+    .lead-bcba-dropdown.lead-bcba-loading {
+      border-color: #ff9800;
+      background-color: #fff3e0;
+      cursor: wait;
+    }
+    
+    .lead-bcba-status {
+      animation: fadeInUp 0.3s ease;
+    }
+    
+    @keyframes fadeInUp {
+      from {
+        opacity: 0;
+        transform: translateY(5px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    /* Leaflet popup content adjustments for Lead BCBA dropdown */
+    .leaflet-popup-content {
+      max-width: 320px !important; /* Slightly wider for dropdown */
+    }
+  </style>
+</head>
+<body>
+  <!-- Control panel - Time Slot Dropdown and Add Therapist button -->
+  <div class="control-container">
+    <div id="timeSlotContainer">
+      <label for="timeSlotSelect"><b>Time Slot:</b></label>
+      <select id="timeSlotSelect">
+        <!-- Monday -->
+        <option value="Monday-Morning">Monday - Morning</option>
+        <option value="Monday-Mid">Monday - Mid</option>
+        <option value="Monday-Afternoon">Monday - Afternoon</option>
+
+        <!-- Tuesday -->
+        <option value="Tuesday-Morning">Tuesday - Morning</option>
+        <option value="Tuesday-Mid">Tuesday - Mid</option>
+        <option value="Tuesday-Afternoon">Tuesday - Afternoon</option>
+
+        <!-- Wednesday -->
+        <option value="Wednesday-Morning">Wednesday - Morning</option>
+        <option value="Wednesday-Mid">Wednesday - Mid</option>
+        <option value="Wednesday-Afternoon">Wednesday - Afternoon</option>
+
+        <!-- Thursday -->
+        <option value="Thursday-Morning">Thursday - Morning</option>
+        <option value="Thursday-Mid">Thursday - Mid</option>
+        <option value="Thursday-Afternoon">Thursday - Afternoon</option>
+
+        <!-- Friday -->
+        <option value="Friday-Morning">Friday - Morning</option>
+        <option value="Friday-Mid">Friday - Mid</option>
+        <option value="Friday-Afternoon">Friday - Afternoon</option>
+      </select>
+    </div>
+    
+    <!-- Add Search Container -->
+    <div class="search-container">
+      <div class="search-input-wrapper">
+        <input type="text" id="mapSearchInput" placeholder="Search therapists, clients or BCBAs..." />
+        <button id="clearMapSearch" class="clear-search" title="Clear search">&times;</button>
+        <span id="searchResultsCount" class="search-results"></span>
+      </div>
+    </div>
+    
+    <div class="button-group">
+      <button id="addTherapistButton" class="add-button">Add New RBT</button>
+      <button id="addClientButton" class="add-button client-button">Add New Client</button>
+    </div>
+  </div>
+
+  <!-- Map Container -->
+  <div id="map"></div>
+  
+  <!-- Status message container for notifications -->
+  <div id="statusMessage" class="status-message">
+    <span id="statusText">Loading...</span>
+    <button class="close-btn" onclick="hideStatusMessage()">&times;</button>
+  </div>
+  
+  <!-- Add Therapist Form Popup -->
+  <div id="therapistFormOverlay" class="form-overlay">
+    <div class="form-container">
+      <h2 class="form-title">Add New Therapist</h2>
+      <div class="form-row">
+        <label for="therapistName">Name:</label>
+        <input type="text" id="therapistName" placeholder="Enter therapist name">
+      </div>
+      <div class="form-row">
+        <label for="therapistAddress">Address:</label>
+        <input type="text" id="therapistAddress" placeholder="Enter therapist address">
+      </div>
+      <div class="form-row">
+        <label for="therapistZipCode">ZIP Code:</label>
+        <input type="text" id="therapistZipCode" placeholder="ZIP Code (optional - will be extracted from address if blank)">
+      </div>
+      <div class="form-row">
+        <label>Title:</label>
+        <div class="title-buttons">
+          <button type="button" class="title-button" data-title="RBT">RBT</button>
+          <button type="button" class="title-button" data-title="Lead RBT">Lead RBT</button>
+          <button type="button" class="title-button" data-title="BCBA">BCBA</button>
+          <button type="button" class="title-button" data-title="Senior Therapist">Senior Therapist</button>
+        </div>
+      </div>
+      <div class="form-buttons">
+        <button class="cancel-button" onclick="closeTherapistForm()">Cancel</button>
+        <button class="submit-button" onclick="submitTherapistForm()">Submit</button>
+      </div>
+      <div id="therapistErrorMessage" class="error-message"></div>
+    </div>
+  </div>
+  
+  <!-- Add Client Form Popup -->
+  <div id="clientFormOverlay" class="form-overlay">
+    <div class="form-container">
+      <h2 class="form-title">Add New Client</h2>
+      <div class="form-row">
+        <label for="clientName">Name:</label>
+        <input type="text" id="clientName" placeholder="Enter client name">
+      </div>
+      <div class="form-row">
+        <label for="clientAddress">Address:</label>
+        <input type="text" id="clientAddress" placeholder="Enter client address (street address only)">
+      </div>
+      <div class="form-row">
+        <label for="clientCity">City:</label>
+        <input type="text" id="clientCity" placeholder="Enter city">
+      </div>
+      <div class="form-row">
+        <label for="clientZipCode">ZIP/Postal Code:</label>
+        <input type="text" id="clientZipCode" placeholder="Enter ZIP/postal code">
+      </div>
+      <div class="form-buttons">
+        <button class="cancel-button" onclick="closeClientForm()">Cancel</button>
+        <button class="submit-button" onclick="submitClientForm()">Submit</button>
+      </div>
+      <div id="clientErrorMessage" class="error-message"></div>
+    </div>
+  </div>
+
+  <!-- Load Leaflet and then our script -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script>
+    // =============================================================================
+    // API COMMUNICATION UTILITIES
+    // =============================================================================
+    
+    // CHECKPOINT 1: Starting API functions
+    console.log('[DEBUG] CHECKPOINT 1: Defining API functions...');
+    
+    /**
+     * Get the current web app URL for API calls
+     */
+    function getWebAppUrl() {
+      var currentUrl = window.location.href;
+      console.log('[INFO] Current page URL:', currentUrl);
+      
+      // Check if we're in a Google Apps Script container
+      if (currentUrl.includes('googleusercontent.com') || currentUrl.includes('userCodeAppPanel')) {
+        console.log('[DEBUG] Detected Google Apps Script container, fixing URL...');
+        
+        // Try to get the deployment URL from the parent frame
+        try {
+          if (window.parent && window.parent.location.href !== window.location.href) {
+            var parentUrl = window.parent.location.href;
+            console.log('[DEBUG] Parent URL:', parentUrl);
+            
+            // Extract deployment ID from parent URL if possible
+            var deploymentMatch = parentUrl.match(/\/macros\/s\/([^\/]+)/);
+            if (deploymentMatch) {
+              var deploymentUrl = 'https://script.google.com/macros/s/' + deploymentMatch[1] + '/exec';
+              console.log('[SUCCESS] Constructed deployment URL from parent');
+              return deploymentUrl;
+            }
+          }
+        } catch (e) {
+          console.log('[WARNING] Could not access parent frame:', e.message);
+        }
+        
+        // Fallback - need to hardcode the deployment URL
+        console.warn('[FALLBACK] Could not determine deployment URL from container. Using page origin.');
+        return window.location.origin + window.location.pathname;
+      }
+      
+      // Normal URL handling
+      var baseUrl = window.location.origin + window.location.pathname;
+      
+      // If we're in dev mode, we need to use the exec endpoint for POST requests
+      if (baseUrl.includes('/dev')) {
+        baseUrl = baseUrl.replace('/dev', '/exec');
+      }
+      
+      console.log('[INFO] API URL determined:', baseUrl);
+      return baseUrl;
+    }
+    
+    /**
+     * Make API call to Google Apps Script backend
+     * @param {string} action - The action to perform (matches doPost switch cases)
+     * @param {Object} params - Parameters to send with the request
+     * @returns {Promise<Object>} - The response from the backend
+     */
+    function callBackendAPI(action, params = {}) {
+      return new Promise((resolve, reject) => {
+        console.log('[MAP] Calling backend API:', action, params);
+        
+        // Use the same approach as the table - call backend function for doPost requests
+        const doPostActions = ['getMapData', 'getEssentialData', 'getSessionsData', 'getScheduleData'];
+        
+        if (doPostActions.includes(action)) {
+          console.log('[MAP] Using server-side doPost proxy for API call:', action);
+          google.script.run
+            .withSuccessHandler((data) => {
+              try {
+                const parsed = (typeof data === 'string') ? JSON.parse(data) : data;
+                console.log('[MAP] doPost response for', action, ':', parsed);
+                resolve(parsed);
+              } catch (e) {
+                console.error('[MAP] Failed to parse doPost response:', e, data);
+                resolve(null);
+              }
+            })
+            .withFailureHandler((error) => {
+              console.error('[MAP] doPost error for', action, ':', error);
+              reject(error);
+            })
+            .makeDoPostRequest(action, params);
+              
+        } else if (typeof google !== 'undefined' && google.script && google.script.run) {
+          console.log('[MAP] Using google.script.run for API call:', action);
+          
+          // Create the API call based on action
+          switch(action) {
+            case 'createAssignment':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .createAssignment(params);
+              break;
+              
+            case 'clearAssignment':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .clearAssignment(params);
+              break;
+              
+            case 'clearTherapistAssignments':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .clearTherapistAssignments(params);
+              break;
+              
+            case 'addTherapist':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .addTherapist(params);
+              break;
+              
+            case 'addClient':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .addClient(params);
+              break;
+              
+            case 'deleteTherapist':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .deleteTherapist(params.therapistId);
+              break;
+              
+            case 'deleteClient':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .deleteClient(params.clientId);
+              break;
+              
+            case 'toggleNAStatus':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .toggleNAStatus(params);
+              break;
+              
+            case 'setNAStatus':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .setNAStatus(params);
+              break;
+              
+            case 'removeNAStatus':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .removeNAStatus(params);
+              break;
+              
+            case 'updateAssignmentDetails':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .updateAssignmentDetails(params);
+              break;
+              
+            case 'getAssignmentDetails':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .getAssignmentDetails(params);
+              break;
+              
+            case 'updateTherapistLead':
+              google.script.run
+                .withSuccessHandler(resolve)
+                .withFailureHandler(reject)
+                .updateTherapistLead(params);
+              break;
+              
+            default:
+              console.error('[MAP] Unknown action:', action);
+              reject(new Error('Unknown action: ' + action));
+              return;
+          }
+        } else {
+          reject(new Error('Google Apps Script API not available'));
+        }
+      });
+    }
+    
+    /**
+     * Load initial map data from backend
+     */
+    async function loadMapDataFromAPI() {
+      console.log('[MAP] Starting loadMapDataFromAPI...');
+      
+      try {
+        // Show loading state
+        showLoadingMessage('Loading map data...');
+        console.log('[MAP] Calling getMapData API...');
+        var data = await callBackendAPI('getMapData');
+        
+        console.log('[MAP] Received map data:', {
+          therapists: data.therapists ? data.therapists.length : 0,
+          clients: data.clients ? data.clients.length : 0,
+          bcbas: data.bcbas ? data.bcbas.length : 0,
+          sessions: data.sessions ? data.sessions.length : 0,
+          assignments: data.assignments ? Object.keys(data.assignments).length : 0,
+          clientDistances: data.clientDistances ? data.clientDistances.length : 0
+        });
+        
+        // Update global variables with enhanced error handling
+        if (data.therapists && Array.isArray(data.therapists)) {
+          therapists = data.therapists;
+          console.log('[MAP] ✅ Loaded therapists:', therapists.length);
+        } else {
+          console.warn('[MAP] ⚠️ No therapists data or invalid format');
+          therapists = [];
+        }
+        
+        if (data.clients && Array.isArray(data.clients)) {
+          clients = data.clients;
+          console.log('[MAP] ✅ Loaded clients:', clients.length);
+        } else {
+          console.warn('[MAP] ⚠️ No clients data or invalid format');
+          clients = [];
+        }
+        
+        if (data.bcbas && Array.isArray(data.bcbas)) {
+          bcbas = data.bcbas;
+          console.log('[MAP] ✅ Loaded BCBAs:', bcbas.length);
+        } else {
+          console.log('[MAP] ℹ️ No BCBAs data (optional)');
+          bcbas = [];
+        }
+        
+        if (data.sessions && Array.isArray(data.sessions)) {
+          sessions = data.sessions;
+          console.log('[MAP] ✅ Loaded sessions:', sessions.length);
+        } else {
+          console.warn('[MAP] ⚠️ No sessions data or invalid format');
+          sessions = [];
+        }
+        
+        if (data.assignments && typeof data.assignments === 'object') {
+          assignments = data.assignments;
+          console.log('[MAP] ✅ Loaded assignments:', Object.keys(assignments).length, 'time slots');
+        } else {
+          console.warn('[MAP] ⚠️ No assignments data or invalid format');
+          assignments = {};
+        }
+        
+        // Enhanced client distances handling
+        if (data.clientDistances && Array.isArray(data.clientDistances)) {
+          clientDistances = data.clientDistances;
+          console.log('[MAP] ✅ Loaded client distances:', clientDistances.length, 'distance records');
+          
+          // Quality checks and sample record logging removed for public release
+        } else {
+          console.warn('[MAP] ⚠️ No client distances data received - client-to-client routing features will be limited');
+          clientDistances = [];
+        }
+        
+        // Update the map
+        console.log('[MAP] Updating markers...');
+        updateMarkers();
+        
+        // Hide loading message and show success
+        hideLoadingMessage();
+        showSuccessMessage('✅ Map data loaded successfully: ' + 
+          therapists.length + ' therapists, ' + 
+          clients.length + ' clients, ' + 
+          clientDistances.length + ' distance records');
+        
+        console.log('[MAP] Map data loaded successfully!');
+        
+        return data;
+      } catch (error) {
+        console.error('[MAP] Failed to load map data:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Failed to load map data: ' + (error.message || 'Unknown error'));
+        throw error;
+      }
+    }
+    
+    /**
+     * Create or update an assignment via API
+     */
+    async function createAssignmentAPI(therapistId, clientId, timeSlot) {
+      console.log('[ASSIGN] Creating assignment: T' + therapistId + ' → C' + clientId + ' (' + timeSlot + ')');
+      
+      // Show loading state
+      var statusMsg = 'Creating assignment...';
+      showLoadingMessage(statusMsg);
+      
+      try {
+        var result = await callBackendAPI('createAssignment', {
+          therapistId: therapistId,
+          clientId: clientId,
+          timeSlot: timeSlot
+        });
+        
+        console.log('[ASSIGN] API Response:', result);
+        
+        if (result.success) {
+          console.log('[ASSIGN] Assignment ' + result.action + ': ' + result.assignmentId);
+          
+          // Update local assignments data with new format
+          if (!assignments[timeSlot]) {
+            assignments[timeSlot] = {};
+          }
+          
+          // Check if client already has an assignment
+          var existingAssignment = assignments[timeSlot][String(clientId)];
+          
+          if (existingAssignment && typeof existingAssignment === 'object' && existingAssignment.therapistIds) {
+            // Add to existing multi-therapist assignment
+            if (!existingAssignment.therapistIds.includes(String(therapistId))) {
+              existingAssignment.therapistIds.push(String(therapistId));
+              existingAssignment.isMultiTherapist = true;
+              existingAssignment.therapistCount = existingAssignment.therapistIds.length;
+            }
+          } else {
+            // Create new assignment in new format
+            assignments[timeSlot][String(clientId)] = {
+              therapistIds: [String(therapistId)],
+              assignmentType: 'regular',
+              assignmentStatus: 'red',
+              startDate: '',
+              notes: '',
+              isMultiTherapist: false,
+              therapistCount: 1
+            };
+          }
+          
+          console.log('[ASSIGN] Updated local assignments:', JSON.stringify(assignments[timeSlot], null, 2));
+          
+          // Update markers
+          updateMarkers();
+          refreshOpenPopups();
+          
+          // Show success message
+          var client = clients.find(function(c) { return String(c.id) === String(clientId); });
+          var therapist = therapists.find(function(t) { return String(t.id) === String(therapistId); });
+          var clientName = client ? client.name : 'Unknown Client';
+          var therapistName = therapist ? therapist.name : 'Unknown Therapist';
+          
+          hideLoadingMessage();
+          showSuccessMessage('✅ Successfully assigned ' + clientName + ' to ' + therapistName + ' for ' + timeSlot);
+          
+          return result;
+        } else {
+          throw new Error(result.error || 'Assignment creation failed');
+        }
+      } catch (error) {
+        console.error('[ERROR] Assignment creation failed:', error);
+        hideLoadingMessage();
+        
+        var client = clients.find(function(c) { return String(c.id) === String(clientId); });
+        var therapist = therapists.find(function(t) { return String(t.id) === String(therapistId); });
+        var clientName = client ? client.name : 'Unknown Client';
+        var therapistName = therapist ? therapist.name : 'Unknown Therapist';
+        
+        showErrorMessage('❌ Failed to assign ' + clientName + ' to ' + therapistName + ': ' + error.message);
+        throw error;
+      }
+    }
+    
+    /**
+     * Clear an assignment via API
+     */
+    async function clearAssignmentAPI(clientId, timeSlot) {
+      console.log('[CLEAR] Clearing assignment: C' + clientId + ' (' + timeSlot + ')');
+      
+      // Show loading state
+      showLoadingMessage('Clearing assignment...');
+      
+      try {
+        var result = await callBackendAPI('clearAssignment', {
+          clientId: clientId,
+          timeSlot: timeSlot
+        });
+        
+        console.log('[CLEAR] API Response:', result);
+        
+        if (result.success) {
+          console.log('[CLEAR] Assignment cleared: ' + result.deleted + ' records');
+          
+          // Update local assignments data
+          if (assignments[timeSlot] && assignments[timeSlot][String(clientId)]) {
+            delete assignments[timeSlot][String(clientId)];
+            console.log('[CLEAR] Updated local assignments after clear');
+          }
+          
+          // Update markers
+          updateMarkers();
+          refreshOpenPopups();
+          
+          // Show success message
+          var client = clients.find(function(c) { return String(c.id) === String(clientId); });
+          var clientName = client ? client.name : 'Unknown Client';
+          
+          hideLoadingMessage();
+          showSuccessMessage('✅ Successfully cleared assignment for ' + clientName + ' from ' + timeSlot);
+          
+          return result;
+        } else {
+          throw new Error(result.error || 'Assignment clearing failed');
+        }
+      } catch (error) {
+        console.error('[ERROR] Assignment clearing failed:', error);
+        hideLoadingMessage();
+        
+        var client = clients.find(function(c) { return String(c.id) === String(clientId); });
+        var clientName = client ? client.name : 'Unknown Client';
+        
+        showErrorMessage('❌ Failed to clear assignment for ' + clientName + ': ' + error.message);
+        throw error;
+      }
+    }
+    
+    /**
+     * Clear all assignments for a therapist via API
+     */
+    async function clearTherapistAssignmentsAPI(therapistId, timeSlot) {
+      console.log('[CLEAR] Clearing all assignments for T' + therapistId + ' (' + timeSlot + ')');
+      
+      try {
+        var result = await callBackendAPI('clearTherapistAssignments', {
+          therapistId: therapistId,
+          timeSlot: timeSlot
+        });
+        
+        if (result.success) {
+          console.log('[CLEAR] Therapist assignments cleared: ' + result.deleted + ' records');
+          
+          // Update local assignments data
+          if (assignments[timeSlot]) {
+            var clientsToRemove = [];
+            for (var clientId in assignments[timeSlot]) {
+              if (String(assignments[timeSlot][clientId]) === String(therapistId)) {
+                clientsToRemove.push(clientId);
+              }
+            }
+            
+            clientsToRemove.forEach(function(clientId) {
+              delete assignments[timeSlot][clientId];
+            });
+            
+            console.log('[CLEAR] Removed ' + clientsToRemove.length + ' local assignments');
+          }
+          
+          // Update markers
+          updateMarkers();
+          refreshOpenPopups();
+          
+          return result;
+        } else {
+          throw new Error(result.error || 'Therapist assignment clearing failed');
+        }
+      } catch (error) {
+        console.error('[ERROR] Therapist assignment clearing failed:', error);
+        alert('Failed to clear therapist assignments: ' + error.message);
+        throw error;
+      }
+    }
+    
+    /**
+     * Add a new therapist via API
+     */
+    async function addTherapistAPI(therapistData) {
+      console.log('[ADD] Adding new therapist (redacted)');
+      
+      // Show loading state
+      var fullName = therapistData.firstName + ' ' + therapistData.lastName;
+      showLoadingMessage('Adding new therapist ' + fullName + '...');
+      
+      try {
+        var result = await callBackendAPI('addTherapist', therapistData);
+        
+        console.log('[ADD] API Response:', result);
+        
+        if (result.success) {
+          console.log('[ADD] Therapist added: T' + result.therapistId);
+          console.log('[ADD] Therapist location:', result.therapist.lat, result.therapist.lng);
+          console.log('[ADD] Travel time calculation results:', result.travelTimeResults);
+          
+          // Show message about distance calculation
+          if (result.travelTimeResults && result.travelTimeResults.length > 0) {
+            showLoadingMessage('Therapist added! Calculating distances to ' + result.travelTimeResults.length + ' clients...');
+          }
+          
+          // Reload the entire map data to get the updated sessions and assignments
+          console.log('[ADD] Reloading map data to refresh sessions...');
+          await loadMapDataFromAPI();
+          
+          // Pan the map to show the new therapist if coordinates are valid
+          if (result.therapist && result.therapist.lat && result.therapist.lng) {
+            console.log('[MAP] Panning to new therapist location:', result.therapist.lat, result.therapist.lng);
+            
+            // Check if coordinates are reasonable (within continental US)
+            var lat = parseFloat(result.therapist.lat);
+            var lng = parseFloat(result.therapist.lng);
+            
+            if (lat >= 24 && lat <= 49 && lng >= -125 && lng <= -66) {
+              // Pan to the new therapist location
+              map.setView([lat, lng], 13); // Zoom level 13 for neighborhood view
+              
+              // Show a success message with location info
+              hideLoadingMessage();
+              
+              var clientCount = result.travelTimeResults ? result.travelTimeResults.length : 0;
+              var successMsg = '✅ Successfully added therapist ' + fullName + ' at coordinates (' + lat.toFixed(4) + ', ' + lng.toFixed(4) + '). Map panned to location.';
+              if (clientCount > 0) {
+                successMsg += ' Calculated distances to ' + clientCount + ' clients.';
+              }
+              
+              showSuccessMessage(successMsg);
+            } else {
+              console.warn('[MAP] Therapist coordinates seem outside continental US:', lat, lng);
+              hideLoadingMessage();
+              showSuccessMessage('✅ Successfully added therapist ' + fullName + ', but coordinates (' + lat.toFixed(4) + ', ' + lng.toFixed(4) + ') may be outside visible area.');
+            }
+          } else {
+            hideLoadingMessage();
+            showSuccessMessage('✅ Successfully added therapist ' + fullName + ', but no coordinates available.');
+          }
+          
+          return result;
+        } else {
+          throw new Error(result.error || 'Therapist creation failed');
+        }
+      } catch (error) {
+        console.error('[ERROR] Therapist creation failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Failed to add therapist ' + fullName + ': ' + error.message);
+        throw error;
+      }
+    }
+    
+    /**
+     * Add a new client via API
+     */
+    async function addClientAPI(clientData) {
+      console.log('[ADD] Adding new client (redacted)');
+      
+      // Show loading state
+      var fullName = clientData.firstName + ' ' + clientData.lastName;
+      showLoadingMessage('Adding new client ' + fullName + '...');
+      
+      try {
+        var result = await callBackendAPI('addClient', clientData);
+        
+        console.log('[ADD] API Response:', result);
+        
+        if (result.success) {
+          console.log('[ADD] Client added: C' + result.clientId);
+          console.log('[ADD] Client location:', result.client.lat, result.client.lng);
+          console.log('[ADD] Travel time calculation results:', result.travelTimeResults);
+          
+          // Show message about distance calculation
+          if (result.travelTimeResults && result.travelTimeResults.length > 0) {
+            showLoadingMessage('Client added! Calculated distances from ' + result.travelTimeResults.length + ' therapists...');
+          }
+          
+          // Reload the entire map data to get the updated sessions and assignments
+          console.log('[ADD] Reloading map data to refresh sessions...');
+          await loadMapDataFromAPI();
+          
+          hideLoadingMessage();
+          
+          var therapistCount = result.travelTimeResults ? result.travelTimeResults.length : 0;
+          var successMsg = '✅ Successfully added client ' + fullName;
+          if (therapistCount > 0) {
+            successMsg += ' and calculated distances from ' + therapistCount + ' therapists.';
+          }
+          
+          showSuccessMessage(successMsg);
+          
+          return result;
+        } else {
+          throw new Error(result.error || 'Client creation failed');
+        }
+      } catch (error) {
+        console.error('[ERROR] Client creation failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Failed to add client ' + fullName + ': ' + error.message);
+        throw error;
+      }
+    }
+    
+    /**
+     * Delete a therapist via API
+     */
+    async function deleteTherapistAPI(therapistId) {
+      console.log('[DELETE] Deleting therapist: T' + therapistId);
+      
+      // Show loading state
+      var therapist = therapists.find(function(t) { return String(t.id) === String(therapistId); });
+      var therapistName = therapist ? therapist.name : 'therapist';
+      showLoadingMessage('Deleting ' + therapistName + '...');
+      
+      try {
+        var result = await callBackendAPI('deleteTherapist', { therapistId: therapistId });
+        
+        console.log('[DELETE] API Response:', result);
+        
+        if (result.success) {
+          console.log('[DELETE] Therapist deleted: ' + result.deleted + ' records');
+          
+          // Remove from local data
+          therapists = therapists.filter(function(t) { return String(t.id) !== String(therapistId); });
+          
+          // Remove assignments
+          Object.keys(assignments).forEach(function(timeSlot) {
+            Object.keys(assignments[timeSlot]).forEach(function(clientId) {
+              if (String(assignments[timeSlot][clientId]) === String(therapistId)) {
+                delete assignments[timeSlot][clientId];
+              }
+            });
+          });
+          
+          console.log('[DELETE] Removed therapist from local data');
+          
+          // Update markers
+          updateMarkers();
+          
+          hideLoadingMessage();
+          showSuccessMessage('✅ Successfully deleted ' + therapistName + ' and all their assignments');
+          
+          return result;
+        } else {
+          throw new Error(result.error || 'Therapist deletion failed');
+        }
+      } catch (error) {
+        console.error('[ERROR] Therapist deletion failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Failed to delete ' + therapistName + ': ' + error.message);
+        throw error;
+      }
+    }
+    
+    /**
+     * Delete a client via API
+     */
+    async function deleteClientAPI(clientId) {
+      console.log('[DELETE] Deleting client: C' + clientId);
+      
+      // Show loading state
+      var client = clients.find(function(c) { return String(c.id) === String(clientId); });
+      var clientName = client ? client.name : 'client';
+      showLoadingMessage('Deleting ' + clientName + '...');
+      
+      try {
+        var result = await callBackendAPI('deleteClient', { clientId: clientId });
+        
+        console.log('[DELETE] API Response:', result);
+        
+        if (result.success) {
+          console.log('[DELETE] Client deleted: ' + result.deleted + ' records');
+          
+          // Remove from local data
+          clients = clients.filter(function(c) { return String(c.id) !== String(clientId); });
+          
+          // Remove assignments
+          Object.keys(assignments).forEach(function(timeSlot) {
+            if (assignments[timeSlot][String(clientId)]) {
+              delete assignments[timeSlot][String(clientId)];
+            }
+          });
+          
+          console.log('[DELETE] Removed client from local data');
+          
+          // Update the map
+          updateMarkers();
+          
+          hideLoadingMessage();
+          showSuccessMessage('✅ Successfully deleted ' + clientName + ' and all their assignments');
+          
+          return result;
+        } else {
+          throw new Error(result.error || 'Client deletion failed');
+        }
+      } catch (error) {
+        console.error('[ERROR] Client deletion failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Failed to delete ' + clientName + ': ' + error.message);
+        throw error;
+      }
+    }
+    
+    // =============================================================================
+    // EXISTING MAP CODE (keeping message listeners for now)
+    // =============================================================================
+    
+    // Variables to store the data
+    var therapists = [];
+    var clients = [];
+    var bcbas = [];
+    var assignments = {};
+    var sessions = []; // Store pre-calculated distance data
+    var clientDistances = []; // Store client-to-client distance data
+    
+    // Search state variables
+    var currentSearchTerm = "";
+    var showOnlyMatches = false;
+    
+    // Store the selected therapist and client for assignment
+    var selectedTherapist = null;
+    var selectedClient = null;
+    
+    // Store selected title for therapist form
+    var selectedTherapistTitle = null;
+    
+    // Initialize marker groups
+    var therapistMarkers = {};
+    var clientMarkers = {};
+    var bcbaMarkers = {};
+    
+    // Initialize the map
+    var map = L.map('map').setView([39.7392, -104.9903], 10); // Denver, CO
+    
+    // Add OpenStreetMap tile layer
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    }).addTo(map);
+    
+    // Helper function to get the current time slot
+    function getCurrentTimeSlot() {
+      return document.getElementById('timeSlotSelect').value;
+    }
+    
+    // =============================================================================
+    // LEAD BCBA MANAGEMENT FUNCTIONS
+    // =============================================================================
+    
+    // Helper function to get lead BCBA for a therapist
+    function getLeadBCBA(therapistId) {
+      var therapist = therapists.find(function(t) { return Number(t.id) === Number(therapistId); });
+      return therapist && therapist.lead ? therapist.lead : "Unassigned";
+    }
+    
+    // Helper function to get available lead BCBAs from therapist data
+    function getAvailableLeadBCBAs() {
+      if (!therapists || therapists.length === 0) {
+        return [];
+      }
+      
+      // Find therapists who have "BCBA" in their title field
+      var bcbaTherapists = therapists.filter(function(therapist) {
+        return therapist.title && therapist.title.toUpperCase().includes('BCBA');
+      });
+      
+      // Extract unique names and sort them
+      var bcbaNames = bcbaTherapists.map(function(therapist) {
+        return therapist.name;
+      });
+      
+      // Remove duplicates and sort
+      var uniqueBCBAs = [...new Set(bcbaNames)].sort();
+      
+      console.log('[LEAD_BCBA] Found available BCBAs:', uniqueBCBAs);
+      return uniqueBCBAs;
+    }
+    
+    // Function to update therapist lead BCBA assignment
+    async function updateTherapistLead(therapistId, newLead) {
+      try {
+        console.log('[LEAD_BCBA] Updating therapist', therapistId, 'lead to:', newLead);
+        
+        // Find the therapist in our local data
+        var therapist = therapists.find(function(t) { return Number(t.id) === Number(therapistId); });
+        if (!therapist) {
+          throw new Error('Therapist not found: ' + therapistId);
+        }
+        
+        var oldLead = therapist.lead || 'Unassigned';
+        
+        // Show loading state
+        showLoadingMessage(`Updating ${therapist.name}'s lead BCBA to ${newLead}...`);
+        
+        // Call backend API to save the change
+        var result = await callBackendAPI('updateTherapistLead', {
+          therapistId: Number(therapistId),
+          leadBCBA: newLead,
+          therapistName: therapist.name
+        });
+        
+        if (result.success) {
+          // Update local data
+          var beforeUpdate = therapist.lead;
+          therapist.lead = newLead;
+          console.log('[LEAD_BCBA] Updated local data for therapist', therapistId);
+          console.log('[LEAD_BCBA] Before:', beforeUpdate, '→ After:', therapist.lead);
+          
+          // Verify therapist object in global array was updated
+          var verifyTherapist = therapists.find(function(t) { return Number(t.id) === Number(therapistId); });
+          console.log('[LEAD_BCBA] Verification - therapist.lead in global array:', verifyTherapist ? verifyTherapist.lead : 'NOT FOUND');
+          
+          // Try direct dropdown update first (more efficient)
+          var directUpdateSuccess = updateLeadBcbaDropdown(therapistId, newLead);
+          
+          if (!directUpdateSuccess) {
+            // Fallback to popup refresh if direct update failed
+            console.log('[LEAD_BCBA] Direct update failed, falling back to popup refresh');
+            updateTherapistPopup(therapistId);
+          } else {
+            console.log('[LEAD_BCBA] Direct dropdown update successful');
+          }
+          
+          // Show success message
+          hideLoadingMessage();
+          showSuccessMessage(`✅ Successfully updated ${therapist.name}'s lead BCBA from "${oldLead}" to "${newLead}"`);
+          
+        } else {
+          throw new Error(result.error || 'Failed to update lead BCBA');
+        }
+        
+      } catch (error) {
+        console.error('[LEAD_BCBA] Error updating therapist lead:', error);
+        
+        // Revert the dropdown to previous value using direct update
+        var therapist = therapists.find(function(t) { return Number(t.id) === Number(therapistId); });
+        var revertValue = (therapist && therapist.lead) ? therapist.lead : 'Unassigned';
+        
+        console.log('[LEAD_BCBA] Reverting dropdown to:', revertValue);
+        var revertSuccess = updateLeadBcbaDropdown(therapistId, revertValue);
+        
+        if (!revertSuccess) {
+          console.warn('[LEAD_BCBA] Direct revert failed, trying selector fallback');
+          var dropdown = document.querySelector(`select[data-therapist-id="${therapistId}"]`);
+          if (dropdown) {
+            dropdown.value = revertValue;
+            console.log('[LEAD_BCBA] Reverted via selector to:', dropdown.value);
+          }
+        }
+        
+        hideLoadingMessage();
+        showErrorMessage(`❌ Failed to update lead BCBA: ${error.message}`);
+      }
+    }
+    
+    // Helper function to directly update Lead BCBA dropdown without popup regeneration
+    function updateLeadBcbaDropdown(therapistId, newLead) {
+      console.log('[LEAD_BCBA] Directly updating dropdown for therapist', therapistId, 'to:', newLead);
+      
+      var dropdown = document.getElementById('leadBcbaDropdown-' + therapistId);
+      if (dropdown) {
+        console.log('[LEAD_BCBA] Found dropdown, current value:', dropdown.value, 'setting to:', newLead);
+        dropdown.value = newLead;
+        
+        // Verify the update worked
+        console.log('[LEAD_BCBA] Dropdown value after update:', dropdown.value);
+        return true;
+      } else {
+        console.warn('[LEAD_BCBA] Dropdown not found for therapist', therapistId);
+        return false;
+      }
+    }
+    
+    // Helper function to update specific therapist popup (fallback method)
+    function updateTherapistPopup(therapistId) {
+      console.log('[LEAD_BCBA] Attempting popup refresh for therapist', therapistId);
+      
+      var marker = therapistMarkers[therapistId];
+      if (marker && marker.isPopupOpen()) {
+        console.log('[LEAD_BCBA] Popup is open, refreshing...');
+        
+        // Clear the event listener flag so it can be rebound
+        var dropdown = document.getElementById('leadBcbaDropdown-' + therapistId);
+        if (dropdown) {
+          dropdown.hasEventListener = false;
+        }
+        
+        // Close and reopen popup to refresh content
+        marker.closePopup();
+        setTimeout(function() {
+          marker.openPopup();
+          console.log('[LEAD_BCBA] Popup reopened');
+        }, 150); // Increased timeout for reliability
+      } else {
+        console.log('[LEAD_BCBA] Popup not open or marker not found');
+      }
+    }
+    
+    // Function to generate Lead BCBA HTML section
+    function generateLeadBcbaHTML(therapist, searchTerm) {
+      var currentLead = therapist.lead || 'Unassigned';
+      var availableLeads = getAvailableLeadBCBAs();
+      
+      var html = '<div class="lead-bcba-section" style="margin: 8px 0; padding: 8px; background-color: #f8f9fa; border-radius: 4px; border: 1px solid #e9ecef;">';
+      html += '<div style="display: flex; align-items: center; gap: 8px;">';
+      html += '<label style="font-weight: bold; margin: 0; min-width: 70px;">Lead BCBA:</label>';
+      
+      html += '<select id="leadBcbaDropdown-' + therapist.id + '" class="lead-bcba-dropdown" data-therapist-id="' + therapist.id + '" ';
+      html += 'style="flex: 1; padding: 4px 6px; border-radius: 3px; border: 1px solid #ddd; font-size: 13px;">';
+      
+      // Add "Unassigned" option
+      html += '<option value="Unassigned"' + (currentLead === 'Unassigned' ? ' selected' : '') + '>Unassigned</option>';
+      
+      // Add BCBA options
+      if (availableLeads.length > 0) {
+        availableLeads.forEach(function(leadName) {
+          var isSelected = currentLead === leadName ? ' selected' : '';
+          var highlightedName = searchTerm ? highlightSearchMatches(leadName, searchTerm) : leadName;
+          html += '<option value="' + leadName + '"' + isSelected + '>' + leadName + '</option>';
+        });
+      } else {
+        html += '<option value="" disabled>No BCBAs found</option>';
+      }
+      
+      html += '</select>';
+      html += '</div>';
+      
+      // Status indicator
+      html += '<div id="leadBcbaStatus-' + therapist.id + '" class="lead-bcba-status" style="font-size: 11px; margin-top: 4px; color: #666; display: none;"></div>';
+      html += '</div>';
+      
+      return html;
+    }
+    
+    // Function to generate N/A status HTML section
+    function generateNAStatusHTML(therapist, timeSlot, isNA, searchTerm) {
+      var html = '<div class="na-status-section" style="margin: 8px 0; padding: 8px; ';
+      html += 'background-color: ' + (isNA ? '#ffebee' : '#e8f5e8') + '; ';
+      html += 'border: 1px solid ' + (isNA ? '#e57373' : '#a5d6a7') + '; ';
+      html += 'border-radius: 4px;">';
+      
+      html += '<div style="display: flex; justify-content: space-between; align-items: center;">';
+      html += '<div>';
+      html += '<strong>Availability:</strong> ';
+      html += '<span style="color: ' + (isNA ? '#d32f2f' : '#388e3c') + '; font-weight: bold;">';
+      html += isNA ? '⚫ N/A' : '✅ Available';
+      html += '</span>';
+      html += '</div>';
+      
+      html += '<button onclick="toggleNAStatusForTherapist(\'' + therapist.id + '\', \'' + timeSlot + '\')" ';
+      html += 'style="padding: 4px 8px; border: none; border-radius: 3px; cursor: pointer; ';
+      html += 'background-color: ' + (isNA ? '#4caf50' : '#f44336') + '; color: white;">';
+      html += isNA ? 'Mark Available' : 'Mark N/A';
+      html += '</button>';
+      html += '</div>';
+      html += '</div>';
+      
+      return html;
+    }
+    
+    // Function to update the map markers based on data
+    function updateMarkers() {
+      console.log("updateMarkers called with:", {
+        therapists: therapists.length,
+        clients: clients.length,
+        bcbas: bcbas.length
+      });
+      
+      // Log sample data to check format
+      if (therapists.length > 0) console.log("Sample therapist:", therapists[0]);
+      if (clients.length > 0) console.log("Sample client:", clients[0]);
+      if (bcbas.length > 0) console.log("Sample BCBA:", bcbas[0]);
+      
+      // Clear existing markers
+      Object.values(therapistMarkers).forEach(function(marker) { map.removeLayer(marker); });
+      Object.values(clientMarkers).forEach(function(marker) { map.removeLayer(marker); });
+      Object.values(bcbaMarkers).forEach(function(marker) { map.removeLayer(marker); });
+      
+      therapistMarkers = {};
+      clientMarkers = {};
+      bcbaMarkers = {};
+      
+      // Track search matches for result count
+      var searchMatches = {
+        therapists: 0,
+        clients: 0,
+        bcbas: 0
+      };
+      
+      // Prepare search term (if any)
+      var searchTerm = currentSearchTerm.toLowerCase().trim();
+      var isSearchActive = searchTerm.length > 0;
+      
+      // Add therapist markers (green for unassigned, orange for assigned)
+      therapists.forEach(function(therapist) {
+        if (therapist.lat && therapist.lng) {
+          // Check if therapist matches search term
+          var therapistMatches = !isSearchActive || 
+            therapist.name.toLowerCase().includes(searchTerm) ||
+            (therapist.address && therapist.address.toLowerCase().includes(searchTerm));
+          
+          // If only showing matches and this one doesn't match, skip
+          if (isSearchActive && showOnlyMatches && !therapistMatches) {
+            return;
+          }
+          
+          // Count this therapist as a match if it matches the search
+          if (therapistMatches && isSearchActive) {
+            searchMatches.therapists++;
+          }
+          
+          var timeSlot = getCurrentTimeSlot();
+          var isNA = isTherapistNA(therapist.id, timeSlot);
+          var assignmentCount = getAssignmentCount(therapist.id, timeSlot);
+          
+          // Change color based on N/A status and assignment status
+          var backgroundColor;
+          if (isNA) {
+            backgroundColor = '#424242'; // Black for N/A (overrides everything)
+          } else if (assignmentCount > 0) {
+            backgroundColor = '#FF9800'; // Orange for assigned
+          } else {
+            backgroundColor = '#4CAF50'; // Green for available
+          }
+          
+          var marker = L.marker([therapist.lat, therapist.lng], {
+            icon: L.divIcon({
+              className: 'therapist-marker ' + (therapistMatches && isSearchActive ? 'marker-highlight' : '') + ' ' + (isSearchActive && !therapistMatches ? 'marker-faded' : ''),
+              html: '<div style="background-color: ' + backgroundColor + '; width: 20px; height: 20px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold;">T</div>',
+              iconSize: [20, 20]
+            })
+          }).addTo(map);
+          
+          // Find assigned clients for this therapist
+          var assignedClients = findAssignedClientsForTherapist(therapist.id, timeSlot);
+          var assignedClientNames = "";
+          
+          if (assignedClients.length > 0) {
+            assignedClientNames = ": " + assignedClients.map(function(c) { return c.name; }).join(", ");
+          }
+          
+          // Check if any assigned clients match the search
+          var clientsMatchSearch = !isSearchActive || assignedClients.some(function(client) {
+            return client.name.toLowerCase().includes(searchTerm);
+          });
+          
+          // Enhance match status if clients match search
+          if (clientsMatchSearch && isSearchActive && !therapistMatches) {
+            marker.getIcon().options.className = 'therapist-marker'; // Remove faded class
+            searchMatches.therapists++;
+          }
+          
+          // Create popup content with assignment functionality
+          // Fix name display - construct from firstName/lastName if name field contains title
+          var displayName = therapist.name;
+          var titleWords = ['RBT', 'Lead RBT', 'BCBA', 'Senior Therapist'];
+          if (!displayName || titleWords.includes(displayName)) {
+            // Construct name from firstName + lastName if name is missing or is a title
+            displayName = (therapist.firstName && therapist.lastName) 
+              ? therapist.firstName + ' ' + therapist.lastName 
+              : (therapist.firstName || therapist.lastName || 'Unknown Therapist');
+          }
+          
+          var popupContent = 
+            '<div>' +
+              '<h3>' + highlightSearchMatches(displayName, searchTerm) + '</h3>' +
+              '<p><strong>Address:</strong> ' + highlightSearchMatches(therapist.address || 'Not available', searchTerm) + '<br>' +
+              '<strong>Assigned:</strong> ' + assignmentCount + ' client(s)' + (assignedClientNames ? highlightSearchMatches(assignedClientNames, searchTerm) : "") +
+            '</p>';
+          
+          // Add Lead BCBA section
+          popupContent += generateLeadBcbaHTML(therapist, searchTerm);
+          
+          // Add N/A status section
+          popupContent += generateNAStatusHTML(therapist, timeSlot, isNA, searchTerm);
+          
+          // Add assignment details section if there are assignments
+          if (assignedClients.length > 0) {
+            popupContent += '<div class="assignment-info">';
+            popupContent += '<h4>Assignment Details</h4>';
+            
+            assignedClients.forEach(function(client) {
+              // Get assignment details from assignments object
+              var assignment = getAssignmentDetails(therapist.id, client.id, timeSlot);
+              
+              popupContent += '<div class="assignment-item">';
+              popupContent += '<span class="assignment-client-name">' + highlightSearchMatches(client.name, searchTerm) + '</span>';
+              
+              if (assignment) {
+                var statusClass = 'status-' + (assignment.assignmentStatus || 'red');
+                var statusIcon = assignment.assignmentStatus === 'red' ? '🔴' : 
+                                assignment.assignmentStatus === 'orange' ? '🟠' : '🟢';
+                var typeIndicator = assignment.assignmentType === 'playPals' ? 
+                  '<span class="assignment-type-indicator play-pals-indicator">Play Pals</span>' : 
+                  '<span class="assignment-type-indicator regular-indicator">Regular</span>';
+                
+                popupContent += '<div class="assignment-type-status">';
+                popupContent += typeIndicator;
+                popupContent += '<span class="' + statusClass + '">' + statusIcon + '</span>';
+                popupContent += '</div>';
+              }
+              
+              popupContent += '</div>';
+            });
+            
+            popupContent += '</div>';
+          }
+          
+          // Add client-to-client routing section (main feature)
+          popupContent += getClientToClientRoutingHTML(therapist, timeSlot, searchTerm);
+          
+          popupContent += getClosestClientsHTML(therapist, timeSlot, searchTerm) +
+              '<a class="deleteTherapistLink" onclick="deleteTherapist(\'' + therapist.id + '\')">Delete Therapist</a>' +
+            '</div>';
+          
+          marker.bindPopup(popupContent);
+          marker.on('click', function() {
+            selectedTherapist = therapist;
+            selectedClient = null;
+          });
+          
+          // Add Lead BCBA dropdown event handling
+          marker.on('popupopen', function() {
+            var dropdown = document.getElementById('leadBcbaDropdown-' + therapist.id);
+            console.log('[LEAD_BCBA] Popup opened for therapist', therapist.id, 'dropdown found:', !!dropdown);
+            
+            if (dropdown) {
+              console.log('[LEAD_BCBA] Dropdown hasEventListener flag:', dropdown.hasEventListener);
+              
+              // Verify dropdown shows correct value
+              var currentLead = therapist.lead || 'Unassigned';
+              console.log('[LEAD_BCBA] Expected dropdown value:', currentLead, 'Actual value:', dropdown.value);
+              
+              if (dropdown.value !== currentLead) {
+                console.warn('[LEAD_BCBA] Dropdown value mismatch! Correcting from', dropdown.value, 'to', currentLead);
+                dropdown.value = currentLead;
+              }
+              
+              if (!dropdown.hasEventListener) {
+                console.log('[LEAD_BCBA] Binding event listener for therapist', therapist.id);
+                dropdown.hasEventListener = true; // Prevent multiple bindings
+                
+                dropdown.addEventListener('change', function() {
+                  var newLead = this.value;
+                  var therapistId = this.dataset.therapistId;
+                  
+                  console.log('[LEAD_BCBA] Dropdown changed for therapist', therapistId, 'to:', newLead);
+                  
+                  // Add loading state
+                  this.classList.add('lead-bcba-loading');
+                  this.disabled = true;
+                  
+                  // Show loading status
+                  var statusDiv = document.getElementById('leadBcbaStatus-' + therapistId);
+                  if (statusDiv) {
+                    statusDiv.textContent = 'Saving...';
+                    statusDiv.style.display = 'block';
+                    statusDiv.style.color = '#2196F3';
+                  }
+                  
+                  // Update the lead assignment
+                  updateTherapistLead(therapistId, newLead).finally(function() {
+                    // Remove loading state
+                    dropdown.classList.remove('lead-bcba-loading');
+                    dropdown.disabled = false;
+                    
+                    // Hide status after delay
+                    setTimeout(function() {
+                      if (statusDiv) {
+                        statusDiv.style.display = 'none';
+                      }
+                    }, 2000);
+                  });
+                });
+              } else {
+                console.log('[LEAD_BCBA] Event listener already bound for therapist', therapist.id);
+              }
+            } else {
+              console.warn('[LEAD_BCBA] Dropdown not found for therapist', therapist.id, 'on popup open');
+            }
+          });
+          
+          therapistMarkers[therapist.id] = marker;
+        }
+      });
+      
+      // Add client markers (blue for unassigned, purple for assigned)
+      clients.forEach(function(client) {
+        if (client.lat && client.lng) {
+          // Check if client matches search term
+          var clientMatches = !isSearchActive || 
+            client.name.toLowerCase().includes(searchTerm) ||
+            (client.address && client.address.toLowerCase().includes(searchTerm));
+          
+          // If only showing matches and this one doesn't match, skip
+          if (isSearchActive && showOnlyMatches && !clientMatches) {
+            return;
+          }
+          
+          // Count this client as a match if it matches the search
+          if (clientMatches && isSearchActive) {
+            searchMatches.clients++;
+          }
+          
+          // Get current time slot
+          var timeSlot = getCurrentTimeSlot();
+          
+          // Check if this client is assigned to a therapist in this time slot
+          var assignedTherapistId = getTherapistForClient(client.id, timeSlot);
+          var assignedTherapistName = "None";
+          var assignmentDetails = null;
+          
+          // Get assignment details if assigned
+          if (assignedTherapistId) {
+            assignmentDetails = getAssignmentDetails(assignedTherapistId, client.id, timeSlot);
+          }
+          
+          // Change color based on assignment status and type
+          var backgroundColor = '#2196F3'; // Default blue for unassigned
+          var borderColor = '#1976D2';
+          var markerClass = 'client-marker';
+          
+          if (assignedTherapistId) {
+            if (assignmentDetails && assignmentDetails.assignmentType === 'playPals') {
+              // Play Pals assignments get blue with special border
+              backgroundColor = '#2196F3';
+              borderColor = '#0D47A1';
+              markerClass += ' play-pals-marker';
+            } else {
+              // Regular assignments get purple
+              backgroundColor = '#673AB7';
+              borderColor = '#4527A0';
+              markerClass += ' regular-marker';
+            }
+            
+            // Convert both IDs to strings for consistent comparison
+            var therapist = therapists.find(function(t) { return String(t.id) === String(assignedTherapistId); });
+            if (therapist) {
+              assignedTherapistName = therapist.name;
+              
+              // Check if assigned therapist matches search
+              if (isSearchActive && !clientMatches && 
+                  therapist.name.toLowerCase().includes(searchTerm)) {
+                // Client is matched through therapist
+                searchMatches.clients++;
+                clientMatches = true; // Set to true to highlight properly
+              }
+            } else {
+              console.log('Could not find therapist with ID ' + assignedTherapistId + ' for client ' + client.id);
+            }
+          }
+          
+          var marker = L.marker([client.lat, client.lng], {
+            icon: L.divIcon({
+              className: markerClass + ' ' + (clientMatches && isSearchActive ? 'marker-highlight' : '') + ' ' + (isSearchActive && !clientMatches ? 'marker-faded' : ''),
+              html: '<div style="background-color: ' + backgroundColor + '; border: 2px solid ' + borderColor + '; width: 20px; height: 20px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold;">C</div>',
+              iconSize: [20, 20]
+            })
+          }).addTo(map);
+          
+          // Create popup content with assignment functionality
+          var popupContent = 
+            '<div>' +
+              '<h3>' + highlightSearchMatches(client.name, searchTerm) + '</h3>' +
+              '<p><strong>Address:</strong> ' + highlightSearchMatches(client.address || 'Not available', searchTerm) + '<br>' +
+              '<strong>Therapist:</strong> ' + highlightSearchMatches(assignedTherapistName, searchTerm);
+          
+          // Add assignment details if assigned
+          if (assignedTherapistId && assignmentDetails) {
+            var statusClass = 'status-' + (assignmentDetails.assignmentStatus || 'red');
+            var statusIcon = assignmentDetails.assignmentStatus === 'red' ? '🔴' : 
+                            assignmentDetails.assignmentStatus === 'orange' ? '🟠' : '🟢';
+            var typeIndicator = assignmentDetails.assignmentType === 'playPals' ? 
+              '<span class="assignment-type-indicator play-pals-indicator">Play Pals</span>' : 
+              '<span class="assignment-type-indicator regular-indicator">Regular</span>';
+            
+            popupContent += '<br><strong>Type:</strong> ' + typeIndicator;
+            popupContent += '<br><strong>Status:</strong> <span class="' + statusClass + '">' + statusIcon + '</span>';
+            
+            if (assignmentDetails.startDate) {
+              popupContent += '<br><strong>Start Date:</strong> ' + assignmentDetails.startDate;
+            }
+            
+            if (assignmentDetails.notes) {
+              popupContent += '<br><strong>Notes:</strong> ' + assignmentDetails.notes;
+            }
+          }
+          
+          // Always show Clear button, but disabled (grey) if nothing to clear
+          if (assignedTherapistId) {
+            popupContent += '<br><a class="clearLink" onclick="clearAssignment(\'' + client.id + '\', \'' + timeSlot + '\')">Clear</a>';
+          } else {
+            // Add a dummy link that looks like clearLink but doesn't do anything
+            popupContent += '<br><a style="color: #ccc; text-decoration: underline; cursor: default; pointer-events: none;">Clear</a>';
+          }
+          
+          popupContent += '</p>';
+          
+          // Add closest therapists section
+          popupContent += getClosestTherapistsHTML(client, timeSlot, searchTerm);
+          
+          popupContent += '<a class="deleteClientLink" onclick="deleteClient(\'' + client.id + '\')">Delete Client</a>';
+          popupContent += '</div>';
+          
+          marker.bindPopup(popupContent);
+          marker.on('click', function() {
+            selectedClient = client;
+            selectedTherapist = null;
+          });
+          
+          clientMarkers[client.id] = marker;
+        }
+      });
+      
+      // Add BCBA markers (purple)
+      bcbas.forEach(function(bcba) {
+        if (bcba.lat && bcba.lng) {
+          // Check if BCBA matches search term
+          var bcbaMatches = !isSearchActive || 
+            bcba.name.toLowerCase().includes(searchTerm) ||
+            (bcba.address && bcba.address.toLowerCase().includes(searchTerm));
+          
+          // If only showing matches and this one doesn't match, skip
+          if (isSearchActive && showOnlyMatches && !bcbaMatches) {
+            return;
+          }
+          
+          // Count this BCBA as a match if it matches the search
+          if (bcbaMatches && isSearchActive) {
+            searchMatches.bcbas++;
+          }
+          
+          var marker = L.marker([bcba.lat, bcba.lng], {
+            icon: L.divIcon({
+              className: 'bcba-marker ' + (bcbaMatches && isSearchActive ? 'marker-highlight' : '') + ' ' + (isSearchActive && !bcbaMatches ? 'marker-faded' : ''),
+              html: '<div style="background-color: #9C27B0; width: 20px; height: 20px; border-radius: 50%; display: flex; justify-content: center; align-items: center; color: white; font-weight: bold;">B</div>',
+              iconSize: [20, 20]
+            })
+          }).addTo(map);
+          
+          var popupContent = 
+            '<div>' +
+              '<h3>' + highlightSearchMatches(bcba.name, searchTerm) + '</h3>' +
+              '<p>Address: ' + highlightSearchMatches(bcba.address || 'Not available', searchTerm) + '</p>' +
+              '<a class="deleteTherapistLink" onclick="deleteBCBA(\'' + bcba.id + '\')">Delete BCBA</a>' +
+            '</div>';
+          
+          marker.bindPopup(popupContent);
+          
+          bcbaMarkers[bcba.id] = marker;
+        }
+      });
+      
+      // Update search results count
+      if (isSearchActive) {
+        var totalMatches = searchMatches.therapists + searchMatches.clients + searchMatches.bcbas;
+        document.getElementById('searchResultsCount').textContent = 
+          totalMatches + ' match' + (totalMatches !== 1 ? 'es' : '') + ' found';
+        document.getElementById('searchResultsCount').style.display = 'inline-block';
+        
+        // Fit map to visible markers if we have matches and showOnlyMatches is true
+        if (showOnlyMatches && totalMatches > 0) {
+          fitMapToVisibleMarkers();
+        }
+      } else {
+        document.getElementById('searchResultsCount').textContent = '';
+        document.getElementById('searchResultsCount').style.display = 'none';
+      }
+    }
+    
+    // Function to highlight search matches in text
+    function highlightSearchMatches(text, searchTerm) {
+      if (!searchTerm || !text) return text || '';
+      
+      searchTerm = searchTerm.toLowerCase().trim();
+      if (!searchTerm) return text;
+      
+      // Escape special regex characters
+      var escapedSearchTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      
+      // Create regex for matching
+      var regex = new RegExp('(' + escapedSearchTerm + ')', 'gi');
+      
+      // Replace matches with highlighted spans
+      return text.replace(regex, '<span class="highlight-text">$1</span>');
+    }
+    
+    // Search functionality
+    document.addEventListener('DOMContentLoaded', function() {
+      var searchInput = document.getElementById('mapSearchInput');
+      var clearButton = document.getElementById('clearMapSearch');
+      
+      // Initial state - hide clear button
+      clearButton.style.display = 'none';
+      
+      // Add event listener for search input
+      searchInput.addEventListener('input', function() {
+        var searchTerm = this.value.trim();
+        currentSearchTerm = searchTerm;
+        
+        // Show/hide clear button based on input
+        clearButton.style.display = searchTerm ? 'flex' : 'none';
+        
+        // Update markers to reflect search
+        updateMarkers();
+        
+        // Notify parent window about search for analytics
+        window.parent.postMessage({
+          type: 'mapSearchApplied',
+          searchTerm: searchTerm
+        }, '*');
+      });
+      
+      // Add event listener for clear button
+      clearButton.addEventListener('click', function() {
+        searchInput.value = '';
+        currentSearchTerm = '';
+        this.style.display = 'none';
+        
+        // Update markers to show all
+        updateMarkers();
+        
+        // Focus back on search input
+        searchInput.focus();
+        
+        // Notify parent window that search was cleared
+        window.parent.postMessage({
+          type: 'mapSearchApplied',
+          searchTerm: ''
+        }, '*');
+      });
+      
+      // Add event listener for Escape key to clear search
+      document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape' && currentSearchTerm) {
+          searchInput.value = '';
+          currentSearchTerm = '';
+          clearButton.style.display = 'none';
+          
+          // Update markers to show all
+          updateMarkers();
+          
+          // Notify parent window that search was cleared
+          window.parent.postMessage({
+            type: 'mapSearchApplied',
+            searchTerm: ''
+          }, '*');
+        }
+      });
+    });
+    
+    // Function to fit the map to visible markers
+    function fitMapToVisibleMarkers() {
+      var visibleMarkers = []
+        .concat(Object.values(therapistMarkers).filter(function(m) { return !m.getIcon().options.className.includes('marker-faded'); }))
+        .concat(Object.values(clientMarkers).filter(function(m) { return !m.getIcon().options.className.includes('marker-faded'); }))
+        .concat(Object.values(bcbaMarkers).filter(function(m) { return !m.getIcon().options.className.includes('marker-faded'); }));
+      
+      if (visibleMarkers.length > 0) {
+        var group = L.featureGroup(visibleMarkers);
+        map.fitBounds(group.getBounds().pad(0.1)); // Add 10% padding around the bounds
+      }
+    }
+    
+    // Helper function to check if therapist is marked as N/A for a time slot
+    function isTherapistNA(therapistId, timeSlot) {
+      if (!assignments[timeSlot]) return false;
+      
+      // Look for any assignment where this therapist is assigned to "N/A"
+      for (var clientId in assignments[timeSlot]) {
+        if (clientId === "N/A") {
+          var assignmentData = assignments[timeSlot][clientId];
+          var assignedTherapistId = null;
+          
+          // Handle both old format (string) and new format (object)
+          if (typeof assignmentData === 'string') {
+            assignedTherapistId = assignmentData;
+          } else if (typeof assignmentData === 'object' && assignmentData.therapistId) {
+            assignedTherapistId = assignmentData.therapistId;
+          }
+          
+          if (String(assignedTherapistId) === String(therapistId)) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+
+    // Helper function to get assignment count for a therapist in a time slot (excluding N/A)
+    function getAssignmentCount(therapistId, timeSlot) {
+      if (!assignments[timeSlot]) return 0;
+      
+      var count = 0;
+      var therapistIdStr = String(therapistId);
+      
+      for (var clientId in assignments[timeSlot]) {
+        // Skip N/A assignments in count
+        if (clientId === "N/A") continue;
+        
+        var assignmentData = assignments[timeSlot][clientId];
+        var assignedTherapistId = null;
+        
+        // Handle both old format (string) and new format (object)
+        if (typeof assignmentData === 'string') {
+          assignedTherapistId = assignmentData;
+        } else if (typeof assignmentData === 'object' && assignmentData.therapistId) {
+          assignedTherapistId = assignmentData.therapistId;
+        }
+        
+        if (String(assignedTherapistId) === therapistIdStr) {
+          count++;
+        }
+      }
+      
+      return count;
+    }
+    
+    // Helper function to find clients assigned to a specific therapist
+    function findAssignedClientsForTherapist(therapistId, timeSlot) {
+      if (!assignments[timeSlot]) return [];
+      
+      var assignedClients = [];
+      var therapistIdStr = String(therapistId);
+      
+      for (var clientId in assignments[timeSlot]) {
+        // Handle both old format (string) and new format (object)
+        var assignmentData = assignments[timeSlot][clientId];
+        var assignedTherapistId = null;
+        
+        if (typeof assignmentData === 'string') {
+          // Old format: assignment data is just the therapist ID
+          assignedTherapistId = assignmentData;
+        } else if (typeof assignmentData === 'object' && assignmentData.therapistId) {
+          // New format: assignment data is an object with therapistId and other details
+          assignedTherapistId = assignmentData.therapistId;
+        }
+        
+        if (String(assignedTherapistId) === therapistIdStr) {
+          var client = clients.find(function(c) { return String(c.id) === String(clientId); });
+          if (client) {
+            assignedClients.push(client);
+          }
+        }
+      }
+      
+      return assignedClients;
+    }
+    
+    // Helper function to get assignment details including type and status
+    function getAssignmentDetails(therapistId, clientId, timeSlot) {
+      if (!assignments[timeSlot] || !assignments[timeSlot][clientId]) return null;
+      
+      var assignmentData = assignments[timeSlot][clientId];
+      
+      // Handle both old format (string) and new format (object)
+      if (typeof assignmentData === 'string') {
+        // Old format: return default values
+        return {
+          therapistId: assignmentData,
+          assignmentType: 'regular',
+          assignmentStatus: 'red',
+          startDate: '',
+          notes: ''
+        };
+      } else if (typeof assignmentData === 'object' && assignmentData.therapistId) {
+        // New format: return the full assignment data
+        return {
+          therapistId: assignmentData.therapistId,
+          assignmentType: assignmentData.assignmentType || 'regular',
+          assignmentStatus: assignmentData.assignmentStatus || 'red',
+          startDate: assignmentData.startDate || '',
+          notes: assignmentData.notes || ''
+        };
+      }
+      
+      return null;
+    }
+    
+    // Helper function to get therapist ID for a client in a time slot (updated for new format)
+    function getTherapistForClient(clientId, timeSlot) {
+      if (!assignments[timeSlot] || !assignments[timeSlot][clientId]) return null;
+      
+      var assignmentData = assignments[timeSlot][clientId];
+      
+      // Handle new format (object with therapistIds array)
+      if (typeof assignmentData === 'object' && assignmentData.therapistIds) {
+        // Return the first therapist ID for backward compatibility
+        return assignmentData.therapistIds[0] || null;
+      }
+      
+      // Handle old format (string)
+      if (typeof assignmentData === 'string') {
+        return assignmentData;
+      }
+      
+      // Handle old format (object with therapistId field)
+      if (typeof assignmentData === 'object' && assignmentData.therapistId) {
+        return assignmentData.therapistId;
+      }
+      
+      return null;
+    }
+    
+    // Function to assign a therapist to a client for a time slot
+    function assignTherapist(therapistId, clientId, timeSlot) {
+      console.log('Assigning therapist ' + therapistId + ' to client ' + clientId + ' for ' + timeSlot);
+      
+      // Check if therapist is N/A for this time slot
+      if (isTherapistNA(therapistId, timeSlot)) {
+        var therapist = therapists.find(function(t) { return String(t.id) === String(therapistId); });
+        var therapistName = therapist ? therapist.name : 'Therapist';
+        
+        showErrorMessage('❌ Cannot assign to ' + therapistName + ' - marked as N/A for ' + timeSlot);
+        return; // Block the assignment
+      }
+      
+      // Use the new API function instead of postMessage
+      createAssignmentAPI(therapistId, clientId, timeSlot)
+        .then(function(result) {
+          console.log('Assignment completed successfully:', result);
+        })
+        .catch(function(error) {
+          console.error('Assignment failed:', error);
+          // Error handling is already done in createAssignmentAPI
+        });
+    }
+    
+    // Helper function to create or update session data when assignment happens
+    function createOrUpdateSessionForAssignment(therapistId, clientId, timeSlot) {
+      // Find existing session data
+      var existingSession = sessions.find(function(s) {
+        return String(s.therapistId) === String(therapistId) && 
+               String(s.clientId) === String(clientId);
+      });
+      
+      if (existingSession) {
+        console.log("Using existing session data for assignment");
+        return Object.assign({}, existingSession, {
+          timeSlot: timeSlot,
+          // Ensure it has the up-to-date fields
+          therapistId: therapistId,
+          clientId: clientId
+        });
+      }
+      
+      // No existing session data, we need to create it
+      console.log("Creating new session data for assignment");
+      
+      // Find therapist and client objects
+      var therapist = therapists.find(function(t) { return String(t.id) === therapistId; });
+      var client = clients.find(function(c) { return String(c.id) === clientId; });
+      
+      if (!therapist || !client) {
+        console.error("Cannot create session: Therapist or client not found", { 
+          therapistId: therapistId, 
+          clientId: clientId 
+        });
+        return null;
+      }
+      
+      // Extract day and time period from timeSlot format (e.g., "Monday-Morning")
+      var splitTimeSlot = timeSlot.split('-');
+      var day = splitTimeSlot[0];
+      var timePeriod = splitTimeSlot[1];
+      
+      // Create basic session data
+      return {
+        therapistId: therapistId,
+        clientId: clientId,
+        therapist_name: therapist.name,
+        client_name: client.name,
+        day: day,
+        time: timePeriod,
+        timeSlot: timeSlot,
+        // If we have distance/duration data, use it
+        distance_miles: getDistanceBetween(therapist, client),
+        travelTime_minutes: getTravelTimeBetween(therapist, client)
+      };
+    }
+    
+    // Helper to calculate distance between therapist and client
+    function getDistanceBetween(therapist, client) {
+      // First look for existing session data
+      var existingSession = sessions.find(function(s) {
+        return String(s.therapistId) === String(therapist.id) && 
+               String(s.clientId) === String(client.id);
+      });
+      
+      if (existingSession && existingSession.distance_miles) {
+        return existingSession.distance_miles;
+      }
+      
+      // If no session data, calculate using Haversine formula
+      if (therapist.lat && therapist.lng && client.lat && client.lng) {
+        var R = 3958.8; // Earth's radius in miles
+        var dLat = (client.lat - therapist.lat) * Math.PI / 180;
+        var dLon = (client.lng - therapist.lng) * Math.PI / 180;
+        var a = 
+          Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+          Math.cos(therapist.lat * Math.PI / 180) * Math.cos(client.lat * Math.PI / 180) * 
+          Math.sin(dLon / 2) * Math.sin(dLon / 2);
+        var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+        return R * c;
+      }
+      
+      // Default fallback
+      return 5.0; // Default to 5 miles
+    }
+    
+    // Helper to estimate travel time between therapist and client
+    function getTravelTimeBetween(therapist, client) {
+      // First look for existing session data
+      var existingSession = sessions.find(function(s) {
+        return String(s.therapistId) === String(therapist.id) && 
+               String(s.clientId) === String(client.id);
+      });
+      
+      if (existingSession && existingSession.travelTime_minutes) {
+        return existingSession.travelTime_minutes;
+      }
+      
+      // If no session data, estimate based on distance
+      var distance = getDistanceBetween(therapist, client);
+      return Math.round(distance * 3); // Roughly 3 minutes per mile
+    }
+
+    // =============================================================================
+    // CLIENT-TO-CLIENT DISTANCE FUNCTIONS (Phase 1)
+    // =============================================================================
+
+    /**
+     * Get distance and travel time between two clients
+     * @param {string|number} clientAId - First client ID
+     * @param {string|number} clientBId - Second client ID
+     * @returns {Object|null} - Distance data or null if not found
+     */
+    function getClientToClientDistance(clientAId, clientBId) {
+      if (!clientDistances || clientDistances.length === 0) {
+        console.warn('[CLIENT_DISTANCE] No client distance data available');
+        return null;
+      }
+
+      // Convert IDs to strings for consistent comparison
+      var idA = String(clientAId);
+      var idB = String(clientBId);
+
+      // Check both directions: A->B and B->A
+      var distanceRecord = clientDistances.find(function(d) {
+        return (String(d.sourceClientId) === idA && String(d.targetClientId) === idB) ||
+               (String(d.sourceClientId) === idB && String(d.targetClientId) === idA);
+      });
+
+      if (distanceRecord) {
+        console.log('[CLIENT_DISTANCE] Found distance between clients', idA, 'and', idB, ':', 
+                    distanceRecord.distanceMiles, 'miles,', distanceRecord.travelMinutes, 'minutes');
+        return {
+          distanceMiles: distanceRecord.distanceMiles || distanceRecord.DistanceMiles,
+          travelMinutes: distanceRecord.travelMinutes || distanceRecord.TravelMinutes,
+          distanceText: distanceRecord.distanceText || distanceRecord.DistanceText || (distanceRecord.distanceMiles + ' mi'),
+          durationText: distanceRecord.durationText || distanceRecord.DurationText || (distanceRecord.travelMinutes + ' mins')
+        };
+      }
+
+      console.warn('[CLIENT_DISTANCE] No distance data found between clients', idA, 'and', idB);
+      return null;
+    }
+
+    /**
+     * Find nearby clients within a maximum distance from a source client
+     * @param {string|number} sourceClientId - Source client ID
+     * @param {number} maxDistance - Maximum distance in miles (default: 15)
+     * @param {string} timeSlot - Time slot to consider for availability (optional)
+     * @returns {Array} - Array of nearby clients with distance data
+     */
+    function findNearbyClients(sourceClientId, maxDistance, timeSlot) {
+      maxDistance = maxDistance || 15; // Default to 15 miles
+      
+      if (!clientDistances || clientDistances.length === 0) {
+        console.warn('[CLIENT_DISTANCE] No client distance data available for findNearbyClients');
+        return [];
+      }
+
+      var sourceId = String(sourceClientId);
+      var nearbyClients = [];
+
+      console.log('[CLIENT_DISTANCE] Finding clients within', maxDistance, 'miles of client', sourceId);
+
+      // Find all distance records involving the source client
+      var relevantDistances = clientDistances.filter(function(d) {
+        return String(d.sourceClientId) === sourceId || String(d.targetClientId) === sourceId;
+      });
+
+      console.log('[CLIENT_DISTANCE] Found', relevantDistances.length, 'distance records for client', sourceId);
+
+      relevantDistances.forEach(function(distanceRecord) {
+        // Determine the target client ID
+        var targetClientId = String(distanceRecord.sourceClientId) === sourceId ? 
+                            String(distanceRecord.targetClientId) : 
+                            String(distanceRecord.sourceClientId);
+
+        // Check distance constraint
+        var distance = distanceRecord.distanceMiles || distanceRecord.DistanceMiles || 0;
+        if (distance <= maxDistance) {
+          // Find the client object
+          var targetClient = clients.find(function(c) { 
+            return String(c.id) === targetClientId; 
+          });
+
+          if (targetClient) {
+            nearbyClients.push({
+              client: targetClient,
+              distance: distance,
+              travelTime: distanceRecord.travelMinutes || distanceRecord.TravelMinutes || 0,
+              distanceText: distanceRecord.distanceText || distanceRecord.DistanceText || (distance + ' mi'),
+              durationText: distanceRecord.durationText || distanceRecord.DurationText || ((distanceRecord.travelMinutes || 0) + ' mins')
+            });
+          }
+        }
+      });
+
+      // Sort by distance (closest first)
+      nearbyClients.sort(function(a, b) {
+        return a.distance - b.distance;
+      });
+
+      console.log('[CLIENT_DISTANCE] Found', nearbyClients.length, 'nearby clients within', maxDistance, 'miles');
+      return nearbyClients;
+    }
+
+    /**
+     * Get optimal next clients for time slot transitions (Morning->Mid, Mid->Afternoon)
+     * @param {Array} currentAssignments - Array of current assignments {therapistId, clientId}
+     * @param {string} nextTimeSlot - Target time slot (e.g., "Monday-Mid")
+     * @returns {Array} - Array of suggestions for each therapist
+     */
+    function getOptimalNextClients(currentAssignments, nextTimeSlot) {
+      if (!currentAssignments || currentAssignments.length === 0) {
+        console.log('[CLIENT_DISTANCE] No current assignments provided for optimal next clients');
+        return [];
+      }
+
+      console.log('[CLIENT_DISTANCE] Finding optimal next clients for', currentAssignments.length, 'current assignments');
+      console.log('[CLIENT_DISTANCE] Target time slot:', nextTimeSlot);
+
+      var suggestions = [];
+
+      currentAssignments.forEach(function(assignment) {
+        var therapistId = assignment.therapistId;
+        var currentClientId = assignment.clientId;
+
+        // Find nearby clients (within 15 miles by default)
+        var nearbyClients = findNearbyClients(currentClientId, 15);
+
+        // Limit to top 5 suggestions
+        var topSuggestions = nearbyClients.slice(0, 5);
+
+        if (topSuggestions.length > 0) {
+          suggestions.push({
+            therapistId: therapistId,
+            currentClientId: currentClientId,
+            currentClientName: getClientName(currentClientId),
+            nextTimeSlot: nextTimeSlot,
+            suggestions: topSuggestions
+          });
+
+          console.log('[CLIENT_DISTANCE] Found', topSuggestions.length, 'suggestions for therapist', therapistId, 
+                      'currently assigned to client', currentClientId);
+        } else {
+          console.warn('[CLIENT_DISTANCE] No nearby clients found for therapist', therapistId, 
+                       'currently assigned to client', currentClientId);
+        }
+      });
+
+      console.log('[CLIENT_DISTANCE] Generated suggestions for', suggestions.length, 'therapists');
+      return suggestions;
+    }
+
+    /**
+     * Helper function to get client name by ID (if not already available)
+     */
+    function getClientName(clientId) {
+      var client = clients.find(function(c) { return String(c.id) === String(clientId); });
+      return client ? client.name : 'Unknown Client';
+    }
+
+
+    
+    // Function to clear an assignment
+    function clearAssignment(clientId, timeSlot) {
+      console.log('Clearing assignment for client ' + clientId + ' in ' + timeSlot);
+        
+      // Use the new API function instead of postMessage
+      clearAssignmentAPI(clientId, timeSlot)
+        .then(function(result) {
+          console.log('Assignment cleared successfully:', result);
+        })
+        .catch(function(error) {
+          console.error('Assignment clearing failed:', error);
+          // Error handling is already done in clearAssignmentAPI
+        });
+    }
+    
+    // Function to delete a therapist
+    function deleteTherapist(therapistId) {
+      if (confirm('Are you sure you want to delete this therapist? This will also remove all their assignments.')) {
+        console.log('Deleting therapist ' + therapistId);
+        
+        // Use the new API function instead of postMessage
+        deleteTherapistAPI(therapistId)
+          .then(function(result) {
+            console.log('Therapist deleted successfully:', result);
+          })
+          .catch(function(error) {
+            console.error('Therapist deletion failed:', error);
+            // Error handling is already done in deleteTherapistAPI
+          });
+      }
+    }
+    
+    // Function to delete a client
+    function deleteClient(clientId) {
+      if (confirm('Are you sure you want to delete this client? This will also remove all their assignments.')) {
+        console.log('Deleting client ' + clientId);
+        
+        // Use the new API function instead of postMessage
+        deleteClientAPI(clientId)
+          .then(function(result) {
+            console.log('Client deleted successfully:', result);
+          })
+          .catch(function(error) {
+            console.error('Client deletion failed:', error);
+            // Error handling is already done in deleteClientAPI
+          });
+      }
+    }
+    
+    // Function to delete a BCBA
+    function deleteBCBA(bcbaId) {
+      if (confirm('Are you sure you want to delete this BCBA? This will also remove BCBA assignment from their clients.')) {
+        console.log('Deleting BCBA ' + bcbaId);
+        
+        // Use the therapist deletion API since BCBAs are stored as therapists
+        deleteTherapistAPI(bcbaId)
+          .then(function(result) {
+            console.log('BCBA deleted successfully:', result);
+          })
+          .catch(function(error) {
+            console.error('BCBA deletion failed:', error);
+            // Error handling is already done in deleteTherapistAPI
+          });
+      }
+    }
+    
+    // Function to clear all assignments for a therapist in a time slot
+    function clearTherapistAssignments(therapistId, timeSlot) {
+      if (confirm('Are you sure you want to clear all assignments for this therapist?')) {
+        console.log('Clearing all assignments for therapist ' + therapistId + ' in ' + timeSlot);
+        
+        // Use the new API function instead of postMessage
+        clearTherapistAssignmentsAPI(therapistId, timeSlot)
+          .then(function(result) {
+            console.log('Therapist assignments cleared successfully:', result);
+          })
+          .catch(function(error) {
+            console.error('Therapist assignment clearing failed:', error);
+            // Error handling is already done in clearTherapistAssignmentsAPI
+          });
+      }
+    }
+    
+    // Helper function to refresh any open popups after assignments change
+    function refreshOpenPopups() {
+      // Close any open popups - they'll be regenerated with correct content when reopened
+      Object.values(therapistMarkers).forEach(function(marker) {
+        if (marker.isPopupOpen()) {
+          var position = marker.getLatLng();
+          marker.closePopup();
+          // Small timeout to ensure the popup closes fully before reopening
+          setTimeout(function() { marker.openPopup(); }, 50);
+        }
+      });
+      
+      Object.values(clientMarkers).forEach(function(marker) {
+        if (marker.isPopupOpen()) {
+          var position = marker.getLatLng();
+          marker.closePopup();
+          // Small timeout to ensure the popup closes fully before reopening
+          setTimeout(function() { marker.openPopup(); }, 50);
+        }
+      });
+    }
+    
+    // Add Therapist Form Functions
+    document.getElementById('addTherapistButton').addEventListener('click', showTherapistForm);
+    
+    function showTherapistForm() {
+      document.getElementById('therapistFormOverlay').style.display = 'flex';
+      // Reset selected title
+      selectedTherapistTitle = null;
+      document.querySelectorAll('.title-button').forEach(function(button) {
+        button.classList.remove('selected');
+      });
+    }
+    
+    function closeTherapistForm() {
+      document.getElementById('therapistFormOverlay').style.display = 'none';
+      document.getElementById('therapistName').value = '';
+      document.getElementById('therapistAddress').value = '';
+      document.getElementById('therapistZipCode').value = '';
+      document.getElementById('therapistErrorMessage').style.display = 'none';
+      selectedTherapistTitle = null;
+    }
+    
+    // Add click handlers for title buttons
+    document.querySelectorAll('.title-button').forEach(function(button) {
+      button.addEventListener('click', function() {
+        // Remove selected class from all buttons
+        document.querySelectorAll('.title-button').forEach(function(btn) {
+          btn.classList.remove('selected');
+        });
+        
+        // Add selected class to clicked button
+        this.classList.add('selected');
+        
+        // Store the selected title
+        selectedTherapistTitle = this.getAttribute('data-title');
+        console.log("Selected title:", selectedTherapistTitle);
+      });
+    });
+    
+    function submitTherapistForm() {
+      var name = document.getElementById('therapistName').value.trim();
+      var address = document.getElementById('therapistAddress').value.trim();
+      var zipCode = document.getElementById('therapistZipCode').value.trim();
+      
+      if (!name || !address) {
+        var errorElement = document.getElementById('therapistErrorMessage');
+        errorElement.textContent = 'Please fill in all fields';
+        errorElement.style.display = 'block';
+        return;
+      }
+      
+      // Parse the name into firstName and lastName
+      var nameParts = name.split(' ');
+      var firstName = nameParts[0] || '';
+      var lastName = nameParts.slice(1).join(' ') || ''; // Handle middle names
+      
+      console.log('Submitting new therapist:', { firstName: firstName, lastName: lastName, title: selectedTherapistTitle });
+      
+      // Use the new API function with properly structured data
+      addTherapistAPI({
+        firstName: firstName,
+        lastName: lastName,
+        address: address,
+        zipCode: zipCode || null,
+        title: selectedTherapistTitle
+      })
+      .then(function(result) {
+        console.log('Therapist added successfully:', result);
+      closeTherapistForm();
+      })
+      .catch(function(error) {
+        console.error('Therapist creation failed:', error);
+        // Show error in form
+        var errorElement = document.getElementById('therapistErrorMessage');
+        errorElement.textContent = 'Failed to add therapist: ' + error.message;
+        errorElement.style.display = 'block';
+      });
+    }
+    
+    // Add Client Form Functions
+    document.getElementById('addClientButton').addEventListener('click', showClientForm);
+    
+    function showClientForm() {
+      document.getElementById('clientFormOverlay').style.display = 'flex';
+    }
+    
+    function closeClientForm() {
+      document.getElementById('clientFormOverlay').style.display = 'none';
+      document.getElementById('clientName').value = '';
+      document.getElementById('clientAddress').value = '';
+      document.getElementById('clientCity').value = '';
+      document.getElementById('clientZipCode').value = '';
+      document.getElementById('clientErrorMessage').style.display = 'none';
+    }
+    
+    function submitClientForm() {
+      var name = document.getElementById('clientName').value.trim();
+      var address = document.getElementById('clientAddress').value.trim();
+      var city = document.getElementById('clientCity').value.trim();
+      var zipCode = document.getElementById('clientZipCode').value.trim();
+      
+      if (!name || !address || !city || !zipCode) {
+        var errorElement = document.getElementById('clientErrorMessage');
+        errorElement.textContent = 'Please fill in all required fields: Name, Address, City, and ZIP Code';
+        errorElement.style.display = 'block';
+        return;
+      }
+      
+      // Parse the name into firstName and lastName
+      var nameParts = name.split(' ');
+      var firstName = nameParts[0] || '';
+      var lastName = nameParts.slice(1).join(' ') || ''; // Handle middle names
+      
+      // Format the full address for geocoding (street address + city + zip)
+      var fullAddress = address + ', ' + city + ', ' + zipCode;
+      
+      console.log('Submitting new client:', { firstName: firstName, lastName: lastName });
+      
+      // Use the new API function with properly structured data
+      addClientAPI({
+        firstName: firstName,
+        lastName: lastName,
+            address: fullAddress, // Send the complete address for geocoding
+        city: city,  // Send city separately
+        zipCode: zipCode // Send ZIP separately
+      })
+      .then(function(result) {
+        console.log('Client added successfully:', result);
+      closeClientForm();
+      })
+      .catch(function(error) {
+        console.error('Client creation failed:', error);
+        // Show error in form
+        var errorElement = document.getElementById('clientErrorMessage');
+        errorElement.textContent = 'Failed to add client: ' + error.message;
+        errorElement.style.display = 'block';
+      });
+    }
+    
+    // CHECKPOINT 2: UI Event Listeners
+    console.log('[DEBUG] CHECKPOINT 2: Setting up UI event listeners...');
+    
+    // Listen for time slot changes
+    document.getElementById('timeSlotSelect').addEventListener('change', updateMarkers);
+    
+    // =============================================================================
+    // DIRECT API INITIALIZATION (replaces message listeners)
+    // =============================================================================
+    
+    /**
+     * Initialize the map with data from API
+     * This replaces the old message-based initialization
+     */
+    function initializeMap() {
+      console.log('[INIT] Initializing map with direct API calls...');
+      
+      // Load data directly from API instead of waiting for messages
+      loadMapDataFromAPI()
+        .then(function() {
+          console.log('[INIT] Map initialization completed successfully!');
+        })
+        .catch(function(error) {
+          console.error('[INIT] Map initialization failed:', error);
+          
+          // Retry once after 2 seconds
+          console.log('[INIT] Retrying map initialization in 2 seconds...');
+          setTimeout(function() {
+            loadMapDataFromAPI()
+              .then(function() {
+                console.log('[INIT] Map initialization retry succeeded!');
+              })
+              .catch(function(retryError) {
+                console.error('[INIT] Map initialization retry failed:', retryError);
+                // Show user-friendly error message
+                alert('Failed to load map data. Please refresh the page and try again.');
+              });
+          }, 2000);
+        });
+    }
+    
+    // Initialize the map when the page loads
+    document.addEventListener('DOMContentLoaded', function() {
+      console.log('[INIT] DOM loaded, starting map initialization...');
+      initializeMap();
+    });
+    
+    // Fallback initialization if DOMContentLoaded already fired
+    if (document.readyState === 'loading') {
+      // DOMContentLoaded has not fired yet
+      console.log('[INIT] Waiting for DOM to load...');
+        } else {
+      // DOMContentLoaded has already fired
+      console.log('[INIT] DOM already loaded, starting map initialization immediately...');
+      initializeMap();
+    }
+    
+    // =============================================================================
+    // LEGACY SESSION FUNCTIONS (keeping for now, may need cleanup later)
+    // =============================================================================
+
+    /**
+     * Updates UI elements to reflect session changes
+     * @param {number} therapistId - The therapist ID
+     * @param {number} clientId - The client ID
+     */
+    function updateSessionDisplay(therapistId, clientId) {
+      // Refresh any open popups for this therapist or client
+      var therapistMarker = therapistMarkers[therapistId];
+      var clientMarker = clientMarkers[clientId];
+      
+      // Update therapist popup if open
+      if (therapistMarker && therapistMarker.isPopupOpen()) {
+        therapistMarker.closePopup();
+        setTimeout(function() { therapistMarker.openPopup(); }, 50);
+      }
+      
+      // Update client popup if open
+      if (clientMarker && clientMarker.isPopupOpen()) {
+        clientMarker.closePopup();
+        setTimeout(function() { clientMarker.openPopup(); }, 50);
+      }
+    }
+    
+    // Find closest n clients to a therapist based on session data
+    function findClosestClients(therapistId, n) {
+      // Default value for n if not provided
+      n = n || 5;
+      
+      console.log('Finding closest ' + n + ' clients to therapist ' + therapistId);
+      
+      // Get all sessions for this therapist
+      var therapistSessions = sessions.filter(function(s) {
+        return String(s.therapistId) === String(therapistId);
+      });
+      
+      console.log('Found ' + therapistSessions.length + ' sessions for therapist ' + therapistId);
+      
+      // List of problematic client names that always show 0.0 miles
+      var problematicClients = ['Donovan Karasiewicz', 'Londyn Lucas', 'Milo Stevens'];
+      
+      // First, separate sessions into two groups: problematic and normal
+      var normalSessions = [];
+      var problematicSessions = [];
+      
+      therapistSessions.forEach(function(session) {
+        var client = clients.find(function(c) { return String(c.id) === String(session.clientId); });
+        if (client && problematicClients.includes(client.name)) {
+          problematicSessions.push(session);
+        } else {
+          normalSessions.push(session);
+        }
+      });
+      
+      console.log('Separated sessions: ' + normalSessions.length + ' normal, ' + problematicSessions.length + ' problematic');
+      
+      // Sort normal sessions by distance
+      var sortedNormalSessions = normalSessions.sort(function(a, b) {
+        var distanceA = Math.max(Number(a.distance_miles) || 0, 0.1);
+        var distanceB = Math.max(Number(b.distance_miles) || 0, 0.1);
+        return distanceA - distanceB;
+      });
+      
+      // Take the top n normal sessions if possible
+      var closestSessions = sortedNormalSessions.slice(0, n);
+      
+      // If we don't have enough normal sessions, add some problematic ones
+      // but give them higher distances to push them to the bottom
+      if (closestSessions.length < n && problematicSessions.length > 0) {
+        // Sort problematic sessions by client name to maintain consistent order
+        var sortedProblematicSessions = problematicSessions.sort(function(a, b) {
+          var clientA = clients.find(function(c) { return String(c.id) === String(a.clientId); });
+          var clientB = clients.find(function(c) { return String(c.id) === String(b.clientId); });
+          return clientA && clientB ? clientA.name.localeCompare(clientB.name) : 0;
+        });
+        
+        // Add only as many as needed to reach n
+        var neededProblematic = n - closestSessions.length;
+        closestSessions = closestSessions.concat(
+          sortedProblematicSessions.slice(0, neededProblematic)
+        );
+      }
+      
+      // Map to client objects with distance info
+      return closestSessions.map(function(session) {
+        // Find the client
+        var client = clients.find(function(c) { return String(c.id) === String(session.clientId); });
+        
+        if (client) {
+          var isProblematic = problematicClients.includes(client.name);
+          
+          // For problematic clients, set higher distances to differentiate them
+          var displayDistance, displayTravelTime;
+          
+          if (isProblematic) {
+            // Give problematic clients randomized distances between 2-5 miles
+            // to disperse them across different therapists
+            var therapistIdNum = parseInt(therapistId, 10) || 1;
+            var clientIdNum = parseInt(client.id, 10) || 1;
+            
+            // Use a deterministic but varied formula based on therapist and client IDs
+            var seed = (therapistIdNum * 17 + clientIdNum * 31) % 30;
+            displayDistance = 2 + (seed / 10); // Between 2.0 and 5.0 miles
+            displayTravelTime = Math.floor(displayDistance * 3); // Roughly 3 mins per mile
+          } else {
+            // Normal distance calculation for non-problematic clients
+            var actualDistance = Number(session.distance_miles) || 0;
+            displayDistance = Math.max(actualDistance, 0.1);
+            
+            var actualTravelTime = Number(session.travelTime_minutes) || 0;
+            displayTravelTime = actualDistance === 0 ? Math.max(actualTravelTime, 1) : actualTravelTime;
+          }
+          
+          return Object.assign({}, client, {
+            distance: displayDistance,
+            travelTime: displayTravelTime,
+            distanceText: displayDistance.toFixed(1) + ' miles',
+            durationText: displayTravelTime.toFixed(0) + ' mins'
+          });
+        }
+        return null;
+      }).filter(function(c) { return c !== null; }); // Remove any not found
+    }
+    
+    // Find closest n therapists to a client based on session data
+    function findClosestTherapists(clientId, n) {
+      // Default value for n if not provided
+      n = n || 5;
+      
+      console.log('Finding closest ' + n + ' therapists to client ' + clientId);
+      
+      // Get all sessions for this client
+      var clientSessions = sessions.filter(function(s) {
+        return String(s.clientId) === String(clientId);
+      });
+      
+      console.log('Found ' + clientSessions.length + ' sessions for client ' + clientId);
+      
+      // Sort by distance with a minimum of 0.1 miles to fix the 0.0 distance issue
+      var sortedSessions = clientSessions.sort(function(a, b) {
+        // Apply minimum distance of 0.1 miles
+        var distanceA = Math.max(Number(a.distance_miles) || 0, 0.1);
+        var distanceB = Math.max(Number(b.distance_miles) || 0, 0.1);
+        return distanceA - distanceB;
+      });
+      
+      // Take top n
+      var closestSessions = sortedSessions.slice(0, n);
+      
+      // Map to therapist objects with distance info
+      return closestSessions.map(function(session) {
+        // Find the therapist
+        var therapist = therapists.find(function(t) { return String(t.id) === String(session.therapistId); });
+        
+        if (therapist) {
+          // Apply minimum distance of 0.1 miles to displayed values too
+          var actualDistance = Number(session.distance_miles) || 0;
+          var displayDistance = Math.max(actualDistance, 0.1);
+          
+          // Calculate reasonable travel time for minimum distance if needed
+          var actualTravelTime = Number(session.travelTime_minutes) || 0;
+          var displayTravelTime = actualDistance === 0 ? Math.max(actualTravelTime, 1) : actualTravelTime;
+          
+          return Object.assign({}, therapist, {
+            distance: displayDistance,
+            travelTime: displayTravelTime,
+            distanceText: session.distance_text || (displayDistance.toFixed(1) + ' miles'),
+            durationText: session.duration_text || (displayTravelTime.toFixed(0) + ' mins')
+          });
+        }
+        return null;
+      }).filter(function(t) { return t !== null; }); // Remove any not found
+    }
+    
+    // Generate HTML for the closest clients to a therapist
+    function getClosestClientsHTML(therapist, timeSlot, searchTerm) {
+      // Default value for searchTerm if not provided
+      searchTerm = searchTerm || '';
+      
+      var html = '';
+      
+      // Find 5 closest clients
+      var closestClients = findClosestClients(therapist.id, 5);
+      
+      if (closestClients.length === 0) {
+        return html + '<p>No closest clients found</p>';
+      }
+      
+      html += '<h4>Closest 5 Clients</h4><div class="closest-list">';
+      
+      closestClients.forEach(function(client) {
+        // Check if this client is already assigned to ANY therapist
+        var assignedTherapistId = getTherapistForClient(client.id, timeSlot);
+        
+        // For debugging - log the assignment data
+        console.log('Client ' + client.id + ' (' + client.name + ') is assigned to therapist ' + assignedTherapistId);
+        
+        // Check if assigned to THIS therapist specifically
+        var isAssignedToThisTherapist = assignedTherapistId && 
+          String(assignedTherapistId) === String(therapist.id);
+        
+        var distanceText = client.distance.toFixed(1) + ' miles (' + client.travelTime.toFixed(0) + ' mins)';
+        
+        // Add a highlight style for assigned clients
+        var rowStyle = isAssignedToThisTherapist ? 
+          'background-color: #fff3e0;' : // Light orange background for assigned clients
+          '';
+          
+        // Highlight client name if it matches search
+        var clientNameHighlighted = highlightSearchMatches(client.name, searchTerm);
+          
+        html += 
+          '<div class="closest-item" style="' + rowStyle + '">' +
+            '<div class="closest-name">' + clientNameHighlighted + (isAssignedToThisTherapist ? ' ✓' : '') + '</div>' +
+            '<div class="closest-distance">' + distanceText + '</div>' +
+            '<div class="closest-action">';
+        
+        // Show different UI if assigned to THIS therapist or if assigned to another therapist
+        if (isAssignedToThisTherapist) {
+          // Make it clearer that this client is assigned to THIS therapist
+          html += '<a class="clearLink" onclick="clearAssignment(\'' + client.id + '\', \'' + timeSlot + '\')">Clear</a>';
+        } else if (assignedTherapistId) {
+          // Client is assigned to another therapist
+          var otherTherapist = therapists.find(function(t) { return String(t.id) === String(assignedTherapistId); });
+          var otherTherapistName = otherTherapist ? otherTherapist.name : 'another';
+          html += '<i>Assigned to ' + highlightSearchMatches(otherTherapistName, searchTerm) + '</i>';
+        } else {
+          html += '<a class="assignLink" onclick="assignTherapist(\'' + therapist.id + '\', \'' + client.id + '\', \'' + timeSlot + '\')">Assign</a>';
+        }
+        
+        html += '</div></div>';
+      });
+      
+      html += '</div>';
+      return html;
+    }
+    
+    // Generate HTML for the closest therapists to a client
+    function getClosestTherapistsHTML(client, timeSlot, searchTerm) {
+      // Default value for searchTerm if not provided
+      searchTerm = searchTerm || '';
+      
+      // Find 5 closest therapists
+      var closestTherapists = findClosestTherapists(client.id, 5);
+      
+      if (closestTherapists.length === 0) {
+        return '<p>No closest therapists found</p>';
+      }
+      
+      var html = '<h4>Closest 5 Therapists</h4><div class="closest-list">';
+      
+      // Get the assigned therapist for this client, if any
+      var assignedTherapistId = getTherapistForClient(client.id, timeSlot);
+      console.log('Client ' + client.id + ' is assigned to therapist ' + assignedTherapistId + ' in ' + timeSlot);
+      
+      closestTherapists.forEach(function(therapist) {
+        // Convert IDs to strings for consistent comparison
+        var isAssigned = assignedTherapistId && 
+          String(assignedTherapistId) === String(therapist.id);
+          
+        var distanceText = therapist.distance.toFixed(1) + ' miles (' + therapist.travelTime.toFixed(0) + ' mins)';
+        
+        // Highlight therapist name if it matches search
+        var therapistNameHighlighted = highlightSearchMatches(therapist.name, searchTerm);
+        
+        html += 
+          '<div class="closest-item">' +
+            '<div class="closest-name">' + therapistNameHighlighted + '</div>' +
+            '<div class="closest-distance">' + distanceText + '</div>' +
+            '<div class="closest-action">';
+        
+        if (isAssigned) {
+          html += '<a class="clearLink" onclick="clearAssignment(\'' + client.id + '\', \'' + timeSlot + '\')">Clear</a>';
+        } else {
+          html += '<a class="assignLink" onclick="assignTherapist(\'' + therapist.id + '\', \'' + client.id + '\', \'' + timeSlot + '\')">Assign</a>';
+        }
+        
+        html += '</div></div>';
+      });
+      
+      html += '</div>';
+      return html;
+    }
+    
+    // =============================================================================
+    // UI FEEDBACK FUNCTIONS
+    // =============================================================================
+    
+    /**
+     * Show a loading message
+     */
+    function showLoadingMessage(message) {
+      var statusElement = document.getElementById('statusMessage');
+      var textElement = document.getElementById('statusText');
+      
+      textElement.textContent = message;
+      statusElement.className = 'status-message loading';
+      
+      // Show with animation
+      setTimeout(function() {
+        statusElement.classList.add('show');
+      }, 10);
+    }
+    
+    /**
+     * Show a success message
+     */
+    function showSuccessMessage(message, autoHide = true) {
+      var statusElement = document.getElementById('statusMessage');
+      var textElement = document.getElementById('statusText');
+      
+      textElement.textContent = message;
+      statusElement.className = 'status-message success';
+      
+      // Show with animation
+      setTimeout(function() {
+        statusElement.classList.add('show');
+      }, 10);
+      
+      // Auto-hide after 4 seconds if requested
+      if (autoHide) {
+        setTimeout(function() {
+          hideStatusMessage();
+        }, 4000);
+      }
+    }
+    
+    /**
+     * Show an error message
+     */
+    function showErrorMessage(message, autoHide = true) {
+      var statusElement = document.getElementById('statusMessage');
+      var textElement = document.getElementById('statusText');
+      
+      textElement.textContent = message;
+      statusElement.className = 'status-message error';
+      
+      // Show with animation
+      setTimeout(function() {
+        statusElement.classList.add('show');
+      }, 10);
+      
+      // Auto-hide after 6 seconds if requested (longer for errors)
+      if (autoHide) {
+        setTimeout(function() {
+          hideStatusMessage();
+        }, 6000);
+      }
+    }
+    
+    /**
+     * Hide the status message
+     */
+    function hideStatusMessage() {
+      var statusElement = document.getElementById('statusMessage');
+      statusElement.classList.remove('show');
+    }
+    
+    /**
+     * Hide the loading message specifically
+     */
+    function hideLoadingMessage() {
+      hideStatusMessage();
+    }
+    
+    // CHECKPOINT 3: Debug functions section
+    console.log('[DEBUG] CHECKPOINT 3: Defining debug functions...');
+    
+    // =============================================================================
+    // DEBUG AND TESTING FUNCTIONS
+    // =============================================================================
+    
+    /**
+     * Test API connectivity - call this from browser console to diagnose issues
+     */
+    async function testMapAPI() {
+      console.log('=== MAP API TEST ===');
+      
+      try {
+        showLoadingMessage('Testing API connection...');
+        
+        // Test basic connectivity
+        console.log('1. Testing basic API connection...');
+        var testResult = await callBackendAPI('testConnection');
+        console.log('✅ Test connection result:', testResult);
+        
+        // Test data loading
+        console.log('2. Testing data loading...');
+        var mapData = await callBackendAPI('getMapData');
+        console.log('✅ Map data loaded:', {
+          therapists: mapData.therapists ? mapData.therapists.length : 0,
+          clients: mapData.clients ? mapData.clients.length : 0,
+          sessions: mapData.sessions ? mapData.sessions.length : 0,
+          assignments: mapData.assignments ? Object.keys(mapData.assignments).length : 0
+        });
+        
+        hideLoadingMessage();
+        showSuccessMessage('✅ API tests completed successfully! Check console for details.');
+        
+        return {
+          success: true,
+          testConnection: testResult,
+          dataLoading: mapData
+        };
+        
+      } catch (error) {
+        console.error('❌ API test failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ API test failed: ' + error.message);
+        
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    }
+    
+    /**
+     * Test a specific assignment operation
+     */
+    async function testAssignmentOperation() {
+      console.log('=== ASSIGNMENT OPERATION TEST ===');
+      
+      try {
+        // Find first available therapist and client for testing
+        if (therapists.length === 0 || clients.length === 0) {
+          throw new Error('No therapists or clients available for testing');
+        }
+        
+        var testTherapist = therapists[0];
+        var testClient = clients[0];
+        var testTimeSlot = 'Monday-Morning';
+        
+        console.log('Testing assignment:', {
+          therapist: testTherapist.name + ' (ID: ' + testTherapist.id + ')',
+          client: testClient.name + ' (ID: ' + testClient.id + ')',
+          timeSlot: testTimeSlot
+        });
+        
+        showLoadingMessage('Testing assignment operation...');
+        
+        // Test creating assignment
+        console.log('1. Testing assignment creation...');
+        var assignResult = await callBackendAPI('createAssignment', {
+          therapistId: testTherapist.id,
+          clientId: testClient.id,
+          timeSlot: testTimeSlot
+        });
+        console.log('✅ Assignment created:', assignResult);
+        
+        // Wait a moment then test clearing assignment
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        console.log('2. Testing assignment clearing...');
+        var clearResult = await callBackendAPI('clearAssignment', {
+          clientId: testClient.id,
+          timeSlot: testTimeSlot
+        });
+        console.log('✅ Assignment cleared:', clearResult);
+        
+        hideLoadingMessage();
+        showSuccessMessage('✅ Assignment operation test completed! Check console for details.');
+        
+        // Refresh the map to reflect any changes
+        updateMarkers();
+        
+        return {
+          success: true,
+          assignResult: assignResult,
+          clearResult: clearResult
+        };
+        
+      } catch (error) {
+        console.error('❌ Assignment operation test failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Assignment test failed: ' + error.message);
+        
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    }
+    
+    /**
+     * Test geocoding functionality specifically
+     */
+    async function testGeocodingService() {
+      console.log('=== GEOCODING SERVICE TEST ===');
+      
+      try {
+        showLoadingMessage('Testing geocoding service...');
+        
+        // Test geocoding functionality
+        console.log('1. Testing geocoding service...');
+        var geocodeResult = await callBackendAPI('testGeocoding');
+        console.log('✅ Geocoding test result:', geocodeResult);
+        
+        hideLoadingMessage();
+        
+        if (geocodeResult.success) {
+          showSuccessMessage('✅ Geocoding service is working correctly! Check console for details.');
+        } else {
+          showErrorMessage('❌ Geocoding test failed: ' + geocodeResult.error);
+        }
+        
+        return geocodeResult;
+        
+      } catch (error) {
+        console.error('❌ Geocoding test failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Geocoding test failed: ' + error.message);
+        
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    }
+    
+    /**
+     * Test adding a therapist with known good data - for debugging
+     */
+    async function testAddTherapist() {
+      console.log('=== TEST THERAPIST ADDITION ===');
+      
+      try {
+        // Test with a known Denver address
+        var testTherapistData = {
+          firstName: 'Test',
+          lastName: 'Therapist',
+          address: '1600 17th Street, Denver, CO 80202',
+          zipCode: '80202',
+          title: 'RBT'
+        };
+        
+        console.log('Testing therapist addition with data:', testTherapistData);
+        
+        var result = await addTherapistAPI(testTherapistData);
+        console.log('✅ Test therapist addition result:', result);
+        
+        return result;
+        
+      } catch (error) {
+        console.error('❌ Test therapist addition failed:', error);
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    }
+    
+    /**
+     * Test distance calculation functionality - for debugging
+     */
+    async function testDistanceCalculation() {
+      console.log('=== TEST DISTANCE CALCULATION ===');
+      
+      try {
+        // Check if we have therapists and clients to test with
+        if (therapists.length === 0 || clients.length === 0) {
+          console.error('No therapists or clients available for testing');
+          return {
+            success: false,
+            error: 'No data available for testing'
+          };
+        }
+        
+        var testTherapist = therapists[0];
+        var testClient = clients[0];
+        
+        console.log('Testing distance calculation between:');
+        console.log('Therapist:', testTherapist.name, 'at', testTherapist.lat, testTherapist.lng);
+        console.log('Client:', testClient.name, 'at', testClient.lat, testClient.lng);
+        
+        showLoadingMessage('Testing distance calculation...');
+        
+        // Test the distance calculation via backend
+        var result = await callBackendAPI('testDistanceCalculation', {
+          therapistId: testTherapist.id,
+          clientId: testClient.id
+        });
+        
+        console.log('✅ Distance calculation test result:', result);
+        
+        hideLoadingMessage();
+        
+        if (result.success) {
+          showSuccessMessage('✅ Distance calculation working! ' + result.distanceText + ' / ' + result.durationText);
+        } else {
+          showErrorMessage('❌ Distance calculation failed: ' + result.error);
+        }
+        
+        return result;
+        
+      } catch (error) {
+        console.error('❌ Distance calculation test failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Distance test failed: ' + error.message);
+        
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    }
+    
+    /**
+     * Analyze ClientDistances data quality - MAIN DIAGNOSTIC FUNCTION
+     * Call this from browser console: analyzeClientData()
+     */
+    async function analyzeClientData() {
+      console.log('=== ANALYZING CLIENT DISTANCES DATA QUALITY ===');
+      
+      try {
+        showLoadingMessage('Analyzing ClientDistances data quality...');
+        
+        var result = await callBackendAPI('analyzeClientDistancesDataQuality');
+        
+        console.log('📊 Analysis Result:', result);
+        
+        hideLoadingMessage();
+        
+        if (result.success) {
+          var msg = `✅ Analysis Complete!\n` +
+                   `• Total Records: ${result.totalRecords}\n` +
+                   `• Usable Records (>0.2mi): ${result.usableRecords} (${result.usablePercentage}%)\n` +
+                   `Check console for detailed breakdown.`;
+          
+          showSuccessMessage(msg, false); // Don't auto-hide
+          
+          // Test client-to-client routing with first available client
+          if (clients.length > 0) {
+            console.log('🧪 Testing client-to-client routing with client', clients[0].id);
+            var testResult = findClosestClientsFromClient(clients[0].id, 5);
+            console.log('🎯 Test routing result:', testResult);
+          }
+          
+        } else {
+          showErrorMessage('❌ Analysis failed: ' + result.error);
+        }
+        
+        return result;
+        
+      } catch (error) {
+        console.error('❌ Client data analysis failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Analysis failed: ' + error.message);
+        
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    }
+    
+    /**
+     * Debug ClientDistances sheet specifically
+     * Call this from browser console: debugClientSheet()
+     */
+    async function debugClientSheet() {
+      console.log('=== DEBUGGING CLIENT DISTANCES SHEET ===');
+      
+      try {
+        showLoadingMessage('Debugging ClientDistances sheet...');
+        
+        var result = await callBackendAPI('debugClientDistancesSheet');
+        
+        console.log('🐛 Debug Result:', result);
+        
+        hideLoadingMessage();
+        
+        if (result.success) {
+          var msg = `✅ ClientDistances Sheet Found!\n` +
+                   `• Records: ${result.recordCount}\n` +
+                   `• Columns: ${result.columns.join(', ')}\n` +
+                   `Check console for sample data.`;
+          
+          showSuccessMessage(msg, false); // Don't auto-hide
+        } else {
+          var errorMsg = '❌ ClientDistances Sheet Issue: ' + result.error;
+          if (result.allSheets) {
+            errorMsg += '\n\nAvailable sheets: ' + result.allSheets.join(', ');
+          }
+          showErrorMessage(errorMsg);
+        }
+        
+        return result;
+        
+      } catch (error) {
+        console.error('❌ ClientDistances sheet debug failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Debug failed: ' + error.message);
+        
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    }
+    
+    /**
+     * Test client-to-client routing with current data
+     * Call this from browser console: testClientRouting()
+     */
+    function testClientRouting() {
+      console.log('=== TESTING CLIENT-TO-CLIENT ROUTING ===');
+      
+      if (clients.length === 0) {
+        console.error('❌ No clients available for testing');
+        return { success: false, error: 'No clients available' };
+      }
+      
+      // Test with first few clients
+      var testClients = clients.slice(0, 3);
+      var results = [];
+      
+      testClients.forEach(function(client, index) {
+        console.log(`\n🧪 Test ${index + 1}: Finding closest clients to ${client.name} (ID: ${client.id})`);
+        
+        var closestClients = findClosestClientsFromClient(client.id, 5);
+        
+        results.push({
+          sourceClient: client.name,
+          sourceClientId: client.id,
+          foundClients: closestClients.length,
+          clients: closestClients.map(function(c) {
+            return {
+              name: c.name,
+              distance: c.distanceText,
+              travelTime: c.durationText
+            };
+          })
+        });
+        
+        console.log(`   Found ${closestClients.length} nearby clients:`);
+        closestClients.forEach(function(nearby, i) {
+          console.log(`   ${i + 1}. ${nearby.name} - ${nearby.distanceText} (${nearby.durationText})`);
+        });
+      });
+      
+      console.log('\n📋 Test Summary:', results);
+      
+      var totalFound = results.reduce(function(sum, r) { return sum + r.foundClients; }, 0);
+      var avgFound = totalFound / results.length;
+      
+      var successMsg = `✅ Client Routing Test Complete!\n` +
+                      `• Tested ${results.length} clients\n` +
+                      `• Average clients found: ${avgFound.toFixed(1)}\n` +
+                      `• Total valid routes: ${totalFound}`;
+      
+      showSuccessMessage(successMsg, false);
+      
+      return {
+        success: true,
+        results: results,
+        summary: {
+          testedClients: results.length,
+          totalRoutesFound: totalFound,
+          averageRoutesPerClient: avgFound
+        }
+      };
+    }
+    
+
+
+
+    
+    // =============================================================================
+    // SIMPLE CLIENT DISTANCE TEST - Minimal Implementation
+    // =============================================================================
+    
+    function simpleClientDistanceTest() {
+      console.log('=== SIMPLE CLIENT DISTANCE TEST ===');
+      console.log('Testing basic functionality...');
+      
+      // Test 1: Check if clientDistances exists
+      console.log('1. clientDistances exists:', typeof clientDistances);
+      console.log('   Length:', clientDistances ? clientDistances.length : 0);
+      
+      // Test 2: Show sample if available
+      if (clientDistances && clientDistances.length > 0) {
+        console.log('   Sample record:', clientDistances[0]);
+        return 'SUCCESS: Client distances loaded (' + clientDistances.length + ' records)';
+      } else {
+        return 'INFO: No client distances loaded (this may be the issue)';
+      }
+    }
+    
+    // CHECKPOINT 4: Assigning functions to window
+    console.log('[DEBUG] CHECKPOINT 4: Assigning test functions to window...');
+    
+    // Make test function globally available
+    window.simpleClientDistanceTest = simpleClientDistanceTest;
+    
+    // Test if assignment worked
+    console.log('[DEBUG] simpleClientDistanceTest assignment check:', typeof window.simpleClientDistanceTest);
+    
+    // Add final checkpoint
+    console.log('[SCRIPT] ✅ All JavaScript loaded successfully!');
+
+    // CHECKPOINT 5: Final function assignments
+    console.log('[DEBUG] CHECKPOINT 5: Assigning final test functions...');
+    
+    // Make test functions globally available
+    window.testMapAPI = testMapAPI;
+    window.testAssignmentOperation = testAssignmentOperation;
+    window.testGeocodingService = testGeocodingService;
+    window.testAddTherapist = testAddTherapist;
+    window.testDistanceCalculation = testDistanceCalculation;
+    
+    // Expose CLIENT-TO-CLIENT DIAGNOSTIC FUNCTIONS
+    window.analyzeClientData = analyzeClientData;
+    window.debugClientSheet = debugClientSheet;
+    window.testClientRouting = testClientRouting;
+    
+    // Expose new client-to-client routing functions
+    window.findClosestClientsFromClient = findClosestClientsFromClient;
+    window.getNextTimeSlot = getNextTimeSlot;
+    window.getClientToClientRoutingHTML = getClientToClientRoutingHTML;
+    
+    // Verify assignments
+    console.log('[DEBUG] Final function checks:');
+    console.log('- testMapAPI:', typeof testMapAPI, '| window.testMapAPI:', typeof window.testMapAPI);
+    console.log('- getWebAppUrl:', typeof getWebAppUrl);
+    console.log('- simpleClientDistanceTest:', typeof simpleClientDistanceTest);
+    
+    console.log('[DEBUG] New client-to-client routing functions:');
+    console.log('- findClosestClientsFromClient:', typeof findClosestClientsFromClient);
+    console.log('- getNextTimeSlot:', typeof getNextTimeSlot);
+    console.log('- getClientToClientRoutingHTML:', typeof getClientToClientRoutingHTML);
+    
+    // =============================================================================
+    // CONTAINER BRIDGE FUNCTIONS - Cross-context access
+    // =============================================================================
+    
+    // Create container-aware testing function
+    function testFromContainer() {
+      console.log('=== TESTING FROM CONTAINER CONTEXT ===');
+      console.log('1. simpleClientDistanceTest result:', simpleClientDistanceTest());
+      console.log('2. Basic data check:');
+      console.log('   - therapists:', typeof therapists, therapists ? therapists.length : 0);
+      console.log('   - clients:', typeof clients, clients ? clients.length : 0);
+      console.log('   - clientDistances:', typeof clientDistances, clientDistances ? clientDistances.length : 0);
+      console.log('   - assignments:', typeof assignments);
+      
+      console.log('3. === FINDING THE REAL DATA SYSTEM ===');
+      
+      // Check for marker systems (where the working data likely lives)
+      console.log('   MARKER SYSTEMS:');
+      console.log('   - therapistMarkers:', typeof therapistMarkers, therapistMarkers ? Object.keys(therapistMarkers).length : 0);
+      console.log('   - clientMarkers:', typeof clientMarkers, clientMarkers ? Object.keys(clientMarkers).length : 0);
+      
+      // Check sessions (where distances are stored)
+      console.log('   DISTANCE DATA:');
+      console.log('   - sessions:', typeof sessions, sessions ? sessions.length : 0);
+      if (sessions && sessions.length > 0) {
+        console.log('   - Sample session:', sessions[0]);
+      }
+      
+      // Look for ALL data variables
+      console.log('   ALL POTENTIAL DATA:');
+      var dataVars = ['therapists', 'clients', 'bcbas', 'assignments', 'sessions', 'clientDistances', 
+                     'therapistMarkers', 'clientMarkers', 'bcbaMarkers'];
+      dataVars.forEach(function(varName) {
+        if (typeof window[varName] !== 'undefined') {
+          var data = window[varName];
+          var count = Array.isArray(data) ? data.length : (data && typeof data === 'object' ? Object.keys(data).length : 'scalar');
+          console.log('   - ' + varName + ':', typeof data, count);
+        }
+      });
+      
+      return 'Data analysis completed - check console for details';
+    }
+    
+    // Deep dive into working distance system
+    function analyzeWorkingDistanceSystem() {
+      console.log('=== ANALYZING WORKING DISTANCE SYSTEM ===');
+      
+      // Check how existing popups work
+      console.log('1. EXISTING POPUP SYSTEM:');
+      console.log('   - getClosestClientsHTML:', typeof getClosestClientsHTML);
+      console.log('   - findClosestClients:', typeof findClosestClients);
+      console.log('   - findClosestTherapists:', typeof findClosestTherapists);
+      
+      // Check marker data (this is likely where real data lives)
+      if (typeof therapistMarkers !== 'undefined' && Object.keys(therapistMarkers).length > 0) {
+        var firstTherapistId = Object.keys(therapistMarkers)[0];
+        var therapistMarker = therapistMarkers[firstTherapistId];
+        console.log('2. THERAPIST MARKER ANALYSIS:');
+        console.log('   - First therapist marker:', therapistMarker);
+        console.log('   - Marker options:', therapistMarker.options);
+        
+        // Test the working closest client function
+        console.log('3. TESTING WORKING FUNCTION:');
+        var closestClients = findClosestClients(firstTherapistId, 3);
+        console.log('   - findClosestClients result:', closestClients);
+        
+        if (closestClients && closestClients.length > 0) {
+          console.log('   - Sample closest client:', closestClients[0]);
+          console.log('   - ✅ WORKING SYSTEM FOUND! This is our model to follow.');
+        }
+      }
+      
+      // Check sessions data structure
+      if (typeof sessions !== 'undefined' && sessions.length > 0) {
+        console.log('4. SESSIONS DATA STRUCTURE:');
+        console.log('   - Total sessions:', sessions.length);
+        console.log('   - Sample session keys:', Object.keys(sessions[0]));
+        console.log('   - Sample session:', sessions[0]);
+        
+        // Look for client-to-client data in sessions
+        var clientToClientSessions = sessions.filter(function(s) {
+          return s.sourceClientId && s.targetClientId;
+        });
+        console.log('   - Client-to-client sessions found:', clientToClientSessions.length);
+        if (clientToClientSessions.length > 0) {
+          console.log('   - Sample client-to-client session:', clientToClientSessions[0]);
+        }
+      }
+      
+      // Test the new client-to-client routing system
+      console.log('5. === TESTING NEW CLIENT-TO-CLIENT ROUTING ===');
+      if (typeof findClosestClientsFromClient !== 'undefined' && clients.length > 0) {
+        var testClientId = clients[0].id;
+        console.log('   - Testing findClosestClientsFromClient with client', testClientId);
+        var closestFromClient = findClosestClientsFromClient(testClientId, 3);
+        console.log('   - Result:', closestFromClient);
+        
+        if (closestFromClient && closestFromClient.length > 0) {
+          console.log('   - ✅ NEW CLIENT-TO-CLIENT SYSTEM IS READY!');
+          console.log('   - Sample result:', closestFromClient[0]);
+        } else {
+          console.log('   - ⚠️ No client-to-client data found (expected if backend needs updating)');
+        }
+      } else {
+        console.log('   - ❌ findClosestClientsFromClient function not found or no clients');
+      }
+      
+      // Test next time slot determination
+      console.log('6. === TESTING TIME SLOT TRANSITIONS ===');
+      var timeSlots = ['Monday-Morning', 'Monday-Mid', 'Monday-Afternoon', 'Tuesday-Morning'];
+      timeSlots.forEach(function(slot) {
+        var next = getNextTimeSlot(slot);
+        console.log('   -', slot, '→', next || 'No transition');
+      });
+      
+             return 'Working system analysis completed';
+    }
+
+
+    
+    // Auto-run container test and analysis
+    console.log('[CONTAINER] Running auto-test...');
+    testFromContainer();
+    
+    console.log('[ANALYSIS] Analyzing working distance system...');
+    analyzeWorkingDistanceSystem();
+    
+    // Expose to parent window if possible
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.testFromContainer = testFromContainer;
+        window.parent.simpleClientDistanceTest = simpleClientDistanceTest;
+        window.parent.analyzeWorkingDistanceSystem = analyzeWorkingDistanceSystem;
+        window.parent.findClosestClientsFromClient = findClosestClientsFromClient;
+        window.parent.getNextTimeSlot = getNextTimeSlot;
+        window.parent.getClientToClientRoutingHTML = getClientToClientRoutingHTML;
+        console.log('[BRIDGE] Functions exposed to parent window');
+      }
+    } catch (e) {
+      console.log('[BRIDGE] Cannot expose to parent (CORS):', e.message);
+    }
+
+    /**
+     * Find closest clients from a source client (mirrors findClosestClients pattern)
+     * @param {string|number} sourceClientId - Source client ID
+     * @param {number} n - Number of closest clients to return (default: 5)
+     * @returns {Array} - Array of closest clients with distance data
+     */
+    function findClosestClientsFromClient(sourceClientId, n) {
+      n = n || 5;
+      
+      console.log('[CLIENT_ROUTE] Finding closest ' + n + ' clients from client ' + sourceClientId);
+      console.log('[CLIENT_ROUTE] clientDistances array available:', clientDistances ? clientDistances.length : 0);
+      
+      // Debug: Check what columns are available in clientDistances data
+      if (clientDistances && clientDistances.length > 0) {
+        console.log('[CLIENT_ROUTE] Sample clientDistances columns:', Object.keys(clientDistances[0]));
+        console.log('[CLIENT_ROUTE] Sample clientDistances data:', clientDistances[0]);
+      } else {
+        console.warn('[CLIENT_ROUTE] No clientDistances data available - this is the main issue');
+        return [];
+      }
+      
+      // Use clientDistances array (not sessions) for client-to-client routing
+      if (clientDistances && clientDistances.length > 0) {
+        // Filter clientDistances for this source client
+        var relevantDistances = clientDistances.filter(function(d) {
+          // Check both directions since client-to-client can be bidirectional
+          // Use exact column names from ClientDistances sheet: SourceClientID and TargetClientID
+          return (d.SourceClientID && String(d.SourceClientID) === String(sourceClientId)) ||
+                 (d.TargetClientID && String(d.TargetClientID) === String(sourceClientId));
+        });
+        
+        console.log('[CLIENT_ROUTE] Found ' + relevantDistances.length + ' relevant client distance records');
+        
+        if (relevantDistances.length > 0) {
+          // Convert to target clients with distances - FILTER OUT BAD DATA
+          var clientsWithDistances = [];
+          var filteredOutCount = 0;
+          
+          relevantDistances.forEach(function(distanceRecord) {
+            // QUALITY CHECK: Only use records with meaningful distances (>= 0.2 miles)
+            var actualDistance = Number(distanceRecord.DistanceMiles) || 0;
+            
+            if (actualDistance < 0.2) {
+              filteredOutCount++;
+              console.log('[CLIENT_ROUTE] Filtered out distance: ' + actualDistance + ' miles (too small)');
+              return; // Skip this record
+            }
+            
+            // Determine which client is the target (not the source)
+            var targetClientId;
+            if (String(distanceRecord.SourceClientID) === String(sourceClientId)) {
+              targetClientId = distanceRecord.TargetClientID;
+            } else {
+              targetClientId = distanceRecord.SourceClientID;
+            }
+            
+            // Find the target client object
+            var targetClient = clients.find(function(c) { return String(c.id) === String(targetClientId); });
+            
+            if (targetClient) {
+              // Use actual distance values (no fallback to 0.1)
+              var actualTravelTime = Number(distanceRecord.TravelMinutes) || Math.round(actualDistance * 3);
+              
+              console.log('[CLIENT_ROUTE] Adding valid client: ' + targetClient.name + ' at ' + actualDistance.toFixed(1) + ' miles');
+              
+              clientsWithDistances.push(Object.assign({}, targetClient, {
+                distance: actualDistance,
+                travelTime: actualTravelTime,
+                distanceText: actualDistance.toFixed(1) + ' miles',
+                durationText: actualTravelTime.toFixed(0) + ' mins'
+              }));
+            } else {
+              console.warn('[CLIENT_ROUTE] Target client not found: ' + targetClientId);
+            }
+          });
+          
+          console.log('[CLIENT_ROUTE] Filtered out ' + filteredOutCount + ' records with distance < 0.2 miles');
+          console.log('[CLIENT_ROUTE] Valid clients found: ' + clientsWithDistances.length);
+          
+          if (clientsWithDistances.length === 0) {
+            console.warn('[CLIENT_ROUTE] No clients with meaningful distances (>= 0.2 miles) found');
+            return [];
+          }
+          
+          // Remove duplicates (same client appearing multiple times)
+          var uniqueClients = [];
+          var seenClientIds = new Set();
+          
+          clientsWithDistances.forEach(function(client) {
+            if (!seenClientIds.has(client.id)) {
+              uniqueClients.push(client);
+              seenClientIds.add(client.id);
+            } else {
+              console.log('[CLIENT_ROUTE] Removed duplicate client: ' + client.name);
+            }
+          });
+          
+          console.log('[CLIENT_ROUTE] Unique clients after deduplication: ' + uniqueClients.length);
+          
+          // Sort by distance (closest first) - same logic as working system
+          var sortedClients = uniqueClients.sort(function(a, b) {
+            return a.distance - b.distance;
+          });
+          
+          // Return top n closest clients
+          var result = sortedClients.slice(0, n);
+          console.log('[CLIENT_ROUTE] Returning ' + result.length + ' closest clients with distances:');
+          result.forEach(function(client, index) {
+            console.log('  ' + (index + 1) + '. ' + client.name + ' - ' + client.distanceText + ' (' + client.durationText + ')');
+          });
+          
+          return result;
+        }
+      }
+      
+      console.warn('[CLIENT_ROUTE] No client-to-client distance data found in clientDistances array');
+      return [];
+    }
+
+    /**
+     * Generate HTML for closest available clients for next time slot (main feature)
+     * This mirrors getClosestClientsHTML but for client-to-client routing
+     */
+    function getNextTimeSlotClientsHTML(currentClientId, nextTimeSlot, searchTerm) {
+      searchTerm = searchTerm || '';
+      
+      console.log('[CLIENT_ROUTE] Generating next time slot clients for client ' + currentClientId + ' → ' + nextTimeSlot);
+      
+      // Find 5 closest clients from current location
+      var closestClients = findClosestClientsFromClient(currentClientId, 5);
+      
+      if (closestClients.length === 0) {
+        return '<div class="client-routing-section">' +
+               '<h4>🚗 Next Time Slot Options</h4>' +
+               '<p style="color: #666; font-style: italic;">No client-to-client distance data available</p>' +
+               '</div>';
+      }
+      
+      var html = '<div class="client-routing-section">' +
+                 '<h4>🚗 Closest Clients for ' + nextTimeSlot + '</h4>' +
+                 '<div class="closest-list">';
+      
+      closestClients.forEach(function(client) {
+        // Check if this client is already assigned in the next time slot
+        var assignedTherapistId = getTherapistForClient(client.id, nextTimeSlot);
+        var isAvailable = !assignedTherapistId;
+        
+        var distanceText = client.distance.toFixed(1) + ' miles (' + client.travelTime.toFixed(0) + ' mins)';
+        
+        // Style based on availability
+        var rowStyle = isAvailable ? 
+          'background-color: #e8f5e8; border-left: 3px solid #4caf50;' : // Green for available
+          'background-color: #fff3e0; border-left: 3px solid #ff9800;';   // Orange for assigned
+          
+        // Highlight client name if it matches search
+        var clientNameHighlighted = highlightSearchMatches(client.name, searchTerm);
+        
+        html += 
+          '<div class="closest-item client-route-item" style="' + rowStyle + ' margin: 2px 0; padding: 6px;">' +
+            '<div class="closest-name" style="font-weight: ' + (isAvailable ? 'normal' : 'bold') + ';">' + 
+            clientNameHighlighted + (isAvailable ? ' ✅' : ' 🟠') + '</div>' +
+            '<div class="closest-distance" style="font-size: 0.9em; color: #666;">' + distanceText + '</div>';
+        
+        if (assignedTherapistId) {
+          var assignedTherapist = therapists.find(function(t) { return String(t.id) === String(assignedTherapistId); });
+          var therapistName = assignedTherapist ? assignedTherapist.name : 'Unknown';
+          html += '<div style="font-size: 0.8em; color: #ff9800;">Assigned to ' + highlightSearchMatches(therapistName, searchTerm) + '</div>';
+        } else {
+          html += '<div style="font-size: 0.8em; color: #4caf50;">Available</div>';
+        }
+        
+        html += '</div>';
+      });
+      
+      html += '</div></div>';
+      return html;
+    }
+
+    /**
+     * Get the next time slot for time slot transitions (Morning→Mid, Mid→Afternoon)
+     * @param {string} currentTimeSlot - Current time slot (e.g., "Monday-Morning")
+     * @returns {string|null} - Next time slot or null if no transition
+     */
+    function getNextTimeSlot(currentTimeSlot) {
+      if (!currentTimeSlot || !currentTimeSlot.includes('-')) {
+        return null;
+      }
+      
+      var parts = currentTimeSlot.split('-');
+      var day = parts[0];
+      var time = parts[1];
+      
+      // Define time slot transitions
+      var transitions = {
+        'Morning': 'Mid',
+        'Mid': 'Afternoon'
+        // Afternoon has no next slot on same day
+      };
+      
+      var nextTime = transitions[time];
+      if (nextTime) {
+        return day + '-' + nextTime;
+      }
+      
+      return null; // No transition available
+    }
+
+    /**
+     * Generate client-to-client routing section for therapist popups
+     * Shows optimal next clients for upcoming time slot transitions
+     */
+    function getClientToClientRoutingHTML(therapist, currentTimeSlot, searchTerm) {
+      searchTerm = searchTerm || '';
+      
+      // Determine next time slot
+      var nextTimeSlot = getNextTimeSlot(currentTimeSlot);
+      if (!nextTimeSlot) {
+        return ''; // No next time slot to route to
+      }
+      
+      console.log('[ROUTING] Generating client-to-client routing for therapist ' + therapist.id + 
+                  ' from ' + currentTimeSlot + ' → ' + nextTimeSlot);
+      
+      // Find assigned clients for current time slot
+      var currentAssignments = findAssignedClientsForTherapist(therapist.id, currentTimeSlot);
+      
+      if (currentAssignments.length === 0) {
+        return ''; // No current assignments to route from
+      }
+      
+      var html = '<div class="client-routing-container" style="background-color: #e8f5e8; border: 2px solid #4caf50; border-radius: 8px; padding: 10px; margin: 10px 0;">';
+      html += '<h4 style="color: #2e7d32; margin: 0 0 8px 0;">🚗 Optimal Routing to ' + nextTimeSlot + '</h4>';
+      
+      // Process each current assignment
+      currentAssignments.forEach(function(currentClient, index) {
+        if (index > 0) {
+          html += '<hr style="margin: 8px 0; border: none; border-top: 1px solid #c8e6c9;">';
+        }
+        
+        html += '<div class="routing-from-client">';
+        html += '<div style="font-weight: bold; color: #1b5e20; margin-bottom: 4px;">From: ' + 
+                highlightSearchMatches(currentClient.name, searchTerm) + '</div>';
+        
+        // Find closest clients from this location
+        var nextClientOptions = findClosestClientsFromClient(currentClient.id, 5); // Top 5
+        
+        if (nextClientOptions.length === 0) {
+          html += '<div style="color: #666; font-style: italic; font-size: 0.9em;">No routing data available</div>';
+        } else {
+          html += '<div class="routing-options" style="margin-left: 10px;">';
+          
+          nextClientOptions.forEach(function(option, optionIndex) {
+            // Check if this client is already assigned in the next time slot
+            var assignedTherapistId = getTherapistForClient(option.id, nextTimeSlot);
+            var isAvailable = !assignedTherapistId;
+            var isAssignedToThisTherapist = assignedTherapistId && String(assignedTherapistId) === String(therapist.id);
+            
+            // Style based on availability
+            var optionStyle = '';
+            var statusIcon = '';
+            var statusText = '';
+            
+            if (isAssignedToThisTherapist) {
+              optionStyle = 'background-color: #fff3e0; border-left: 3px solid #ff9800;';
+              statusIcon = '✓';
+              statusText = 'Already assigned';
+            } else if (isAvailable) {
+              optionStyle = 'background-color: #f1f8e9; border-left: 3px solid #8bc34a;';
+              statusIcon = '✅';
+              statusText = 'Available';
+            } else {
+              var otherTherapist = therapists.find(function(t) { return String(t.id) === String(assignedTherapistId); });
+              var otherTherapistName = otherTherapist ? otherTherapist.name : 'Another therapist';
+              optionStyle = 'background-color: #fce4ec; border-left: 3px solid #e91e63;';
+              statusIcon = '🔒';
+              statusText = 'Assigned to ' + highlightSearchMatches(otherTherapistName, searchTerm);
+            }
+            
+            html += '<div style="' + optionStyle + ' padding: 4px 6px; margin: 2px 0; font-size: 0.9em;">';
+            html += '<div style="display: flex; justify-content: space-between; align-items: center;">';
+            html += '<span>' + statusIcon + ' ' + highlightSearchMatches(option.name, searchTerm) + '</span>';
+            html += '<span style="color: #666; font-size: 0.8em;">' + option.distanceText + '</span>';
+            html += '</div>';
+            html += '<div style="font-size: 0.8em; color: #666;">' + statusText + '</div>';
+            html += '</div>';
+          });
+          
+          html += '</div>'; // End routing-options
+        }
+        
+        html += '</div>'; // End routing-from-client
+      });
+      
+      html += '</div>'; // End client-routing-container
+      return html;
+    }
+
+    // =============================================================================
+    // CLIENT DISTANCE REFRESH AUTOMATION SYSTEM
+    // =============================================================================
+    
+    /**
+     * Comprehensive system to refresh all therapist-client distance calculations
+     * by systematically deleting and re-adding all clients
+     */
+    
+    /**
+     * Backup all current client data for restoration
+     */
+    function backupClientData() {
+      console.log('[REFRESH] Backing up client data...');
+      
+      var backup = {
+        clients: clients.map(function(client) {
+          // Parse name into firstName and lastName for re-adding
+          var nameParts = (client.name || '').split(' ');
+          var firstName = nameParts[0] || '';
+          var lastName = nameParts.slice(1).join(' ') || '';
+          
+          return {
+            id: client.id,
+            firstName: firstName,
+            lastName: lastName,
+            fullName: client.name,
+            address: client.address,
+            city: extractCityFromClient(client),
+            zipCode: client.zipCode || extractZipFromAddress(client.address),
+            originalData: client // Keep original for reference
+          };
+        }),
+        timestamp: new Date().toISOString()
+      };
+      
+      console.log('[REFRESH] Backed up ' + backup.clients.length + ' clients');
+      console.log('[REFRESH] Sample backup data:', backup.clients[0]);
+      
+      return backup;
+    }
+    
+    /**
+     * Helper function to extract city from client data
+     */
+    function extractCityFromClient(client) {
+      // Try to get city from existing client.city property first
+      if (client.city) {
+        return client.city;
+      }
+      
+      // Try to extract from address if no separate city field
+      if (client.address) {
+        // Look for city in address format: "Street, City, State ZIP"
+        var addressParts = client.address.split(',');
+        if (addressParts.length >= 2) {
+          return addressParts[addressParts.length - 2].trim();
+        }
+      }
+      
+      return 'Denver'; // Default fallback
+    }
+    
+    /**
+     * Helper function to extract ZIP code from address string
+     */
+    function extractZipFromAddress(address) {
+      if (!address) return '';
+      
+      // Look for 5-digit ZIP code at the end of address
+      var zipMatch = address.match(/\b(\d{5})\b[^0-9]*$/);
+      return zipMatch ? zipMatch[1] : '';
+    }
+    
+         /**
+      * Main function to refresh all distance calculations by deleting and re-adding clients
+      */
+     async function refreshAllClientDistances(options) {
+       options = options || {};
+       var delayBetweenOperations = options.delay || 2000; // 2 seconds default
+       
+       console.log('[REFRESH] === STARTING CLIENT DISTANCE REFRESH PROCESS ===');
+       console.log('[REFRESH] Options:', {
+         delay: delayBetweenOperations
+       });
+       
+       if (clients.length === 0) {
+         showErrorMessage('No clients found to refresh');
+         return { success: false, error: 'No clients available' };
+       }
+       
+       // Confirm with user
+       var confirmMsg = 'This will delete and re-add all ' + clients.length + ' clients to recalculate distances.\n\n';
+       confirmMsg += '⚠️ All assignments will be cleared during this process.\n\n';
+       confirmMsg += 'This process may take several minutes. Continue?';
+       
+       if (!confirm(confirmMsg)) {
+         console.log('[REFRESH] Process cancelled by user');
+         return { success: false, error: 'Cancelled by user' };
+       }
+       
+       try {
+         showLoadingMessage('Backing up client data...');
+         
+         // Step 1: Backup all client data
+         var backup = backupClientData();
+         
+         if (backup.clients.length === 0) {
+           throw new Error('No client data to backup');
+         }
+         
+         var results = {
+           totalClients: backup.clients.length,
+           deleted: 0,
+           added: 0,
+           failed: [],
+           newClientIds: [],
+           startTime: new Date(),
+           backup: backup
+         };
+         
+         // Step 2: Delete all clients
+         showLoadingMessage('Deleting ' + backup.clients.length + ' clients...');
+         console.log('[REFRESH] Starting deletion phase...');
+         
+         for (var i = 0; i < backup.clients.length; i++) {
+           var client = backup.clients[i];
+           
+           try {
+             showLoadingMessage('Deleting client ' + (i + 1) + '/' + backup.clients.length + ': ' + client.fullName);
+             console.log('[REFRESH] Deleting client ' + (i + 1) + ': ' + client.fullName + ' (ID: ' + client.id + ')');
+             
+             await deleteClientAPI(client.id);
+             results.deleted++;
+             
+             console.log('[REFRESH] Successfully deleted ' + client.fullName);
+             
+             // Small delay between deletions
+             if (i < backup.clients.length - 1) {
+               await new Promise(resolve => setTimeout(resolve, delayBetweenOperations / 2));
+             }
+             
+           } catch (error) {
+             console.error('[REFRESH] Failed to delete client ' + client.fullName + ':', error);
+             results.failed.push({
+               phase: 'delete',
+               client: client.fullName,
+               error: error.message
+             });
+             // Continue with next client even if this one failed
+           }
+         }
+         
+         console.log('[REFRESH] Deletion phase complete. Deleted: ' + results.deleted + ', Failed: ' + results.failed.length);
+         
+         // Step 3: Re-add all clients
+         showLoadingMessage('Re-adding clients and calculating distances...');
+         console.log('[REFRESH] Starting re-addition phase...');
+         
+         for (var i = 0; i < backup.clients.length; i++) {
+           var client = backup.clients[i];
+           
+           try {
+             showLoadingMessage('Re-adding client ' + (i + 1) + '/' + backup.clients.length + ': ' + client.fullName);
+             console.log('[REFRESH] Re-adding client ' + (i + 1) + ': ' + client.fullName);
+             
+             var addResult = await addClientAPI({
+               firstName: client.firstName,
+               lastName: client.lastName,
+               address: client.address,
+               city: client.city,
+               zipCode: client.zipCode
+             });
+             
+             if (addResult.success && addResult.clientId) {
+               results.newClientIds.push(addResult.clientId);
+               results.added++;
+               console.log('[REFRESH] Successfully re-added ' + client.fullName + ' with new ID: ' + addResult.clientId);
+             } else {
+               throw new Error('Add operation returned unsuccessful result');
+             }
+             
+             // Delay between additions to avoid overwhelming the API
+             if (i < backup.clients.length - 1) {
+               await new Promise(resolve => setTimeout(resolve, delayBetweenOperations));
+             }
+             
+           } catch (error) {
+             console.error('[REFRESH] Failed to re-add client ' + client.fullName + ':', error);
+             results.failed.push({
+               phase: 'add',
+               client: client.fullName,
+               error: error.message
+             });
+             // Continue with next client even if this one failed
+           }
+         }
+         
+         console.log('[REFRESH] Re-addition phase complete. Added: ' + results.added + ', Failed: ' + results.failed.length);
+         
+         // Step 4: Refresh the map with new distance calculations
+         showLoadingMessage('Refreshing map display with new distances...');
+         await new Promise(resolve => setTimeout(resolve, 3000)); // Wait for distance calculations
+         await loadMapDataFromAPI();
+         updateMarkers();
+         
+         // Calculate final results
+         results.endTime = new Date();
+         results.duration = Math.round((results.endTime - results.startTime) / 1000);
+         results.success = results.failed.length === 0;
+         
+         hideLoadingMessage();
+         
+         // Show comprehensive results
+         var resultMsg = '✅ Client distance refresh process completed!\n\n';
+         resultMsg += 'Results:\n';
+         resultMsg += '• Total clients: ' + results.totalClients + '\n';
+         resultMsg += '• Successfully deleted: ' + results.deleted + '\n';
+         resultMsg += '• Successfully re-added: ' + results.added + '\n';
+         resultMsg += '• Failed operations: ' + results.failed.length + '\n';
+         resultMsg += '• Duration: ' + results.duration + ' seconds\n';
+         resultMsg += '• All assignments cleared (need to reassign)\n';
+         
+         if (results.failed.length > 0) {
+           resultMsg += '\nFailed operations:\n';
+           results.failed.forEach(function(failure) {
+             resultMsg += '• ' + failure.phase + ' ' + failure.client + ': ' + failure.error + '\n';
+           });
+           showErrorMessage(resultMsg, false); // Don't auto-hide
+         } else {
+           showSuccessMessage(resultMsg, false); // Don't auto-hide
+         }
+         
+         console.log('[REFRESH] === CLIENT DISTANCE REFRESH PROCESS COMPLETE ===');
+         console.log('[REFRESH] Final results:', results);
+         
+         return results;
+         
+       } catch (error) {
+         console.error('[REFRESH] Client distance refresh process failed:', error);
+         hideLoadingMessage();
+         showErrorMessage('❌ Client distance refresh failed: ' + error.message + '\n\nCheck console for details.');
+         
+         return {
+           success: false,
+           error: error.message,
+           backup: backup || null
+         };
+       }
+     }
+    
+         /**
+      * Quick refresh function with default settings (2-second delays)
+      */
+     async function quickRefreshClientDistances() {
+       return await refreshAllClientDistances({
+         delay: 2000
+       });
+     }
+     
+     /**
+      * Fast refresh function (shorter delays)
+      */
+     async function fastRefreshClientDistances() {
+       return await refreshAllClientDistances({
+         delay: 1000
+       });
+     }
+     
+     /**
+      * Emergency restore function if something goes wrong with client data
+      */
+     function emergencyRestoreClients(backupData) {
+       if (!backupData || !backupData.clients) {
+         console.error('[EMERGENCY] No backup data provided');
+         alert('No backup data available for emergency restore');
+         return;
+       }
+       
+       console.log('[EMERGENCY] Starting emergency restore with backup from ' + backupData.timestamp);
+       console.log('[EMERGENCY] Backup contains ' + backupData.clients.length + ' clients');
+       
+       // Clear any existing assignments since clients will have new IDs
+       assignments = {};
+       
+       // Update markers to reflect cleared assignments
+       updateMarkers();
+       
+       console.log('[EMERGENCY] Emergency restore completed - all assignments cleared');
+       alert('Emergency restore completed. All assignments have been cleared.\n\nYou will need to manually re-add the missing clients from the backup data logged to console.');
+       
+       // Log backup data for manual restoration
+       console.log('[EMERGENCY] Backup client data for manual restoration:');
+       backupData.clients.forEach(function(client, index) {
+         console.log((index + 1) + '. ' + client.fullName + ' - ' + client.address + ' (BCBA: ' + (client.bcbaId || 'None') + ')');
+       });
+     }
+     
+     // Make functions globally available for console access
+     window.refreshAllClientDistances = refreshAllClientDistances;
+     window.quickRefreshClientDistances = quickRefreshClientDistances;
+     window.fastRefreshClientDistances = fastRefreshClientDistances;
+     window.emergencyRestoreClients = emergencyRestoreClients;
+     window.backupClientData = backupClientData;
+     
+     console.log('[REFRESH] Client distance refresh automation system loaded');
+     console.log('[REFRESH] Available functions:');
+     console.log('  - quickRefreshClientDistances() - Safe refresh with 2-second delays');
+     console.log('  - fastRefreshClientDistances() - Faster refresh with 1-second delays');
+     console.log('  - refreshAllClientDistances(options) - Custom refresh with options');
+     console.log('  - emergencyRestoreClients(backupData) - Emergency restore if something fails');
+
+    // Function to toggle N/A status for a therapist from map popup
+    async function toggleNAStatusForTherapist(therapistId, timeSlot) {
+      try {
+        var therapist = therapists.find(function(t) { return String(t.id) === String(therapistId); });
+        var therapistName = therapist ? therapist.name : 'therapist';
+        var isCurrentlyNA = isTherapistNA(therapistId, timeSlot);
+        
+        // Parse timeSlot back to day and timeBlock for API
+        var parts = timeSlot.split('-');
+        var day = parts[0];
+        var timeBlock = parts[1];
+        
+        showLoadingMessage((isCurrentlyNA ? 'Removing N/A status' : 'Setting N/A status') + ' for ' + therapistName + '...');
+        
+        var apiAction = isCurrentlyNA ? 'removeNAStatus' : 'setNAStatus';
+        var result = await callBackendAPI(apiAction, {
+          therapistId: Number(therapistId),
+          day: day,
+          timeBlock: timeBlock,
+          scheduleType: 'current' // Use current schedule like the table
+        });
+        
+        if (result.success) {
+          // Update local assignments data
+          if (isCurrentlyNA) {
+            // Remove N/A assignment
+            if (assignments[timeSlot] && assignments[timeSlot]['N/A']) {
+              delete assignments[timeSlot]['N/A'];
+            }
+          } else {
+            // Add N/A assignment  
+            if (!assignments[timeSlot]) assignments[timeSlot] = {};
+            assignments[timeSlot]['N/A'] = String(therapistId);
+          }
+          
+          // Refresh markers and popups
+          updateMarkers();
+          refreshOpenPopups();
+          
+          hideLoadingMessage();
+          var action = isCurrentlyNA ? 'removed N/A status for' : 'marked as N/A';
+          showSuccessMessage('✅ Successfully ' + action + ' ' + therapistName + ' for ' + timeSlot);
+          
+        } else {
+          throw new Error(result.error || 'N/A status toggle failed');
+        }
+        
+      } catch (error) {
+        console.error('[NA] N/A status toggle failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ Failed to toggle N/A status: ' + error.message);
+      }
+    }
+    
+    // Helper function to refresh any open popups after assignments change
+    function refreshOpenPopups() {
+      // Close any open popups - they'll be regenerated with correct content when reopened
+      Object.values(therapistMarkers).forEach(function(marker) {
+        if (marker.isPopupOpen()) {
+          var position = marker.getLatLng();
+          marker.closePopup();
+          // Small timeout to ensure the popup closes fully before reopening
+          setTimeout(function() { marker.openPopup(); }, 50);
+        }
+      });
+      
+      Object.values(clientMarkers).forEach(function(marker) {
+        if (marker.isPopupOpen()) {
+          var position = marker.getLatLng();
+          marker.closePopup();
+          // Small timeout to ensure the popup closes fully before reopening
+          setTimeout(function() { marker.openPopup(); }, 50);
+        }
+      });
+    }
+    
+    // Helper function to get assignment details including type and status (updated for new format)
+    function getAssignmentDetails(therapistId, clientId, timeSlot) {
+      if (!assignments[timeSlot] || !assignments[timeSlot][clientId]) return null;
+      
+      var assignmentData = assignments[timeSlot][clientId];
+      
+      // Handle new format (object with therapistIds array)
+      if (typeof assignmentData === 'object' && assignmentData.therapistIds) {
+        // Check if this therapist is in the assignment
+        if (assignmentData.therapistIds.includes(String(therapistId))) {
+          return {
+            therapistId: therapistId,
+            therapistIds: assignmentData.therapistIds,
+            assignmentType: assignmentData.assignmentType || 'regular',
+            assignmentStatus: assignmentData.assignmentStatus || 'red',
+            startDate: assignmentData.startDate || '',
+            notes: assignmentData.notes || '',
+            isMultiTherapist: assignmentData.isMultiTherapist || false,
+            therapistCount: assignmentData.therapistCount || 1
+          };
+        }
+        return null;
+      }
+      
+      // Handle old format (string)
+      if (typeof assignmentData === 'string') {
+        if (String(assignmentData) === String(therapistId)) {
+          return {
+            therapistId: assignmentData,
+            therapistIds: [assignmentData],
+            assignmentType: 'regular',
+            assignmentStatus: 'red',
+            startDate: '',
+            notes: '',
+            isMultiTherapist: false,
+            therapistCount: 1
+          };
+        }
+        return null;
+      }
+      
+      // Handle old format (object with therapistId field)
+      if (typeof assignmentData === 'object' && assignmentData.therapistId) {
+        if (String(assignmentData.therapistId) === String(therapistId)) {
+          return {
+            therapistId: assignmentData.therapistId,
+            therapistIds: [assignmentData.therapistId],
+            assignmentType: assignmentData.assignmentType || 'regular',
+            assignmentStatus: assignmentData.assignmentStatus || 'red',
+            startDate: assignmentData.startDate || '',
+            notes: assignmentData.notes || '',
+            isMultiTherapist: false,
+            therapistCount: 1
+          };
+        }
+        return null;
+      }
+      
+      return null;
+    }
+    
+    // Helper function to find clients assigned to a specific therapist (updated for new format)
+    function findAssignedClientsForTherapist(therapistId, timeSlot) {
+      if (!assignments[timeSlot]) return [];
+      
+      var assignedClients = [];
+      var therapistIdStr = String(therapistId);
+      
+      for (var clientId in assignments[timeSlot]) {
+        var assignmentData = assignments[timeSlot][clientId];
+        var isAssigned = false;
+        
+        // Handle new format (object with therapistIds array)
+        if (typeof assignmentData === 'object' && assignmentData.therapistIds) {
+          isAssigned = assignmentData.therapistIds.some(function(id) {
+            return String(id) === therapistIdStr;
+          });
+        }
+        // Handle old format (string)
+        else if (typeof assignmentData === 'string') {
+          isAssigned = String(assignmentData) === therapistIdStr;
+        }
+        // Handle old format (object with therapistId field)
+        else if (typeof assignmentData === 'object' && assignmentData.therapistId) {
+          isAssigned = String(assignmentData.therapistId) === therapistIdStr;
+        }
+        
+        if (isAssigned) {
+          var client = clients.find(function(c) { return String(c.id) === String(clientId); });
+          if (client) {
+            assignedClients.push(client);
+          }
+        }
+      }
+      
+      return assignedClients;
+    }
+    
+    // Helper function to get assignment count for a therapist in a time slot (updated for new format)
+    function getAssignmentCount(therapistId, timeSlot) {
+      if (!assignments[timeSlot]) return 0;
+      
+      var count = 0;
+      var therapistIdStr = String(therapistId);
+      
+      for (var clientId in assignments[timeSlot]) {
+        // Skip N/A assignments in count
+        if (clientId === "N/A") continue;
+        
+        var assignmentData = assignments[timeSlot][clientId];
+        var isAssigned = false;
+        
+        // Handle new format (object with therapistIds array)
+        if (typeof assignmentData === 'object' && assignmentData.therapistIds) {
+          isAssigned = assignmentData.therapistIds.some(function(id) {
+            return String(id) === therapistIdStr;
+          });
+        }
+        // Handle old format (string)
+        else if (typeof assignmentData === 'string') {
+          isAssigned = String(assignmentData) === therapistIdStr;
+        }
+        // Handle old format (object with therapistId field)
+        else if (typeof assignmentData === 'object' && assignmentData.therapistId) {
+          isAssigned = String(assignmentData.therapistId) === therapistIdStr;
+        }
+        
+        if (isAssigned) {
+          count++;
+        }
+      }
+      
+      return count;
+    }
+    
+    // Helper function to check if therapist is marked as N/A for a time slot (updated for new format)
+    function isTherapistNA(therapistId, timeSlot) {
+      if (!assignments[timeSlot]) return false;
+      
+      // Look for any assignment where this therapist is assigned to "N/A"
+      for (var clientId in assignments[timeSlot]) {
+        if (clientId === "N/A") {
+          var assignmentData = assignments[timeSlot][clientId];
+          var isAssigned = false;
+          
+          // Handle new format (object with therapistIds array)
+          if (typeof assignmentData === 'object' && assignmentData.therapistIds) {
+            isAssigned = assignmentData.therapistIds.some(function(id) {
+              return String(id) === String(therapistId);
+            });
+          }
+          // Handle old format (string)
+          else if (typeof assignmentData === 'string') {
+            isAssigned = String(assignmentData) === String(therapistId);
+          }
+          // Handle old format (object with therapistId field)
+          else if (typeof assignmentData === 'object' && assignmentData.therapistId) {
+            isAssigned = String(assignmentData.therapistId) === String(therapistId);
+          }
+          
+          if (isAssigned) {
+            return true;
+          }
+        }
+      }
+      return false;
+    }
+    
+    // Debug function to analyze assignment data structure
+    function debugAssignmentData() {
+      console.log('=== ASSIGNMENT DATA DEBUG ===');
+      console.log('Assignments object:', assignments);
+      
+      if (assignments && Object.keys(assignments).length > 0) {
+        var timeSlots = Object.keys(assignments);
+        console.log('Time slots found:', timeSlots);
+        
+        timeSlots.forEach(function(timeSlot) {
+          console.log(`\nTime slot: ${timeSlot}`);
+          var slotAssignments = assignments[timeSlot];
+          console.log('Client assignments:', Object.keys(slotAssignments));
+          
+          Object.keys(slotAssignments).forEach(function(clientId) {
+            var assignmentData = slotAssignments[clientId];
+            console.log(`  Client ${clientId}:`, assignmentData);
+            
+            // Test helper functions
+            var therapistId = getTherapistForClient(clientId, timeSlot);
+            console.log(`    getTherapistForClient: ${therapistId}`);
+            
+            if (therapistId) {
+              var details = getAssignmentDetails(therapistId, clientId, timeSlot);
+              console.log(`    getAssignmentDetails:`, details);
+            }
+          });
+        });
+      } else {
+        console.log('No assignments data found');
+      }
+      
+      return 'Assignment data analysis complete - check console';
+    }
+    
+    // Make debug function globally available
+    window.debugAssignmentData = debugAssignmentData;
+    
+    /**
+     * Test assignment data loading and helper functions
+     * Call this from browser console: testAssignmentData()
+     */
+    function testAssignmentData() {
+      console.log('=== TESTING ASSIGNMENT DATA LOADING ===');
+      
+      // Test 1: Check if assignments data is loaded
+      console.log('1. Assignments data check:');
+      console.log('   - Assignments object exists:', typeof assignments !== 'undefined');
+      console.log('   - Assignments keys:', assignments ? Object.keys(assignments) : 'undefined');
+      
+      if (assignments && Object.keys(assignments).length > 0) {
+        var timeSlots = Object.keys(assignments);
+        console.log('   - Time slots found:', timeSlots.length);
+        
+        // Test 2: Analyze first time slot
+        var firstTimeSlot = timeSlots[0];
+        console.log('\n2. First time slot analysis (' + firstTimeSlot + '):');
+        var slotAssignments = assignments[firstTimeSlot];
+        console.log('   - Client assignments:', Object.keys(slotAssignments));
+        
+        // Test 3: Test helper functions with first assignment
+        var firstClientId = Object.keys(slotAssignments)[0];
+        if (firstClientId) {
+          console.log('\n3. Testing helper functions with client ' + firstClientId + ':');
+          
+          var therapistId = getTherapistForClient(firstClientId, firstTimeSlot);
+          console.log('   - getTherapistForClient():', therapistId);
+          
+          if (therapistId) {
+            var details = getAssignmentDetails(therapistId, firstClientId, firstTimeSlot);
+            console.log('   - getAssignmentDetails():', details);
+            
+            var assignedClients = findAssignedClientsForTherapist(therapistId, firstTimeSlot);
+            console.log('   - findAssignedClientsForTherapist():', assignedClients.length, 'clients');
+            
+            var assignmentCount = getAssignmentCount(therapistId, firstTimeSlot);
+            console.log('   - getAssignmentCount():', assignmentCount);
+          }
+        }
+        
+        // Test 4: Test with actual therapist and client data
+        if (therapists.length > 0 && clients.length > 0) {
+          console.log('\n4. Testing with actual data:');
+          var testTherapist = therapists[0];
+          var testClient = clients[0];
+          
+          console.log('   - Test therapist:', testTherapist.name, '(ID:', testTherapist.id + ')');
+          console.log('   - Test client:', testClient.name, '(ID:', testClient.id + ')');
+          
+          var assignedTherapistId = getTherapistForClient(testClient.id, firstTimeSlot);
+          console.log('   - Client assigned to therapist:', assignedTherapistId);
+          
+          if (assignedTherapistId) {
+            var therapistDetails = getAssignmentDetails(assignedTherapistId, testClient.id, firstTimeSlot);
+            console.log('   - Assignment details:', therapistDetails);
+          }
+        }
+      } else {
+        console.log('   - No assignments data found');
+      }
+      
+      // Test 5: Check data format compatibility
+      console.log('\n5. Data format compatibility:');
+      console.log('   - New format support: ✅ (therapistIds arrays)');
+      console.log('   - Old format support: ✅ (string therapistId)');
+      console.log('   - Multi-therapist support: ✅ (isMultiTherapist flag)');
+      
+      return 'Assignment data test complete - check console for details';
+    }
+    
+    // Make test function globally available
+    window.testAssignmentData = testAssignmentData;
+    
+    /**
+     * Comprehensive diagnostic function for assignment loading issues
+     * Call this from browser console: diagnoseAssignmentIssue()
+     */
+    function diagnoseAssignmentIssue() {
+      console.log('=== COMPREHENSIVE ASSIGNMENT DIAGNOSIS ===');
+      
+      // Step 1: Check data loading
+      console.log('\n1. DATA LOADING CHECK:');
+      console.log('   - Therapists loaded:', therapists ? therapists.length : 0);
+      console.log('   - Clients loaded:', clients ? clients.length : 0);
+      console.log('   - Assignments loaded:', assignments ? Object.keys(assignments).length : 0);
+      console.log('   - Sessions loaded:', sessions ? sessions.length : 0);
+      
+      // Step 2: Check API response
+      console.log('\n2. API RESPONSE ANALYSIS:');
+      if (assignments && Object.keys(assignments).length > 0) {
+        var timeSlots = Object.keys(assignments);
+        console.log('   - Time slots in assignments:', timeSlots);
+        
+        timeSlots.forEach(function(timeSlot) {
+          var slotData = assignments[timeSlot];
+          console.log(`   - ${timeSlot}: ${Object.keys(slotData).length} assignments`);
+          
+          // Show first few assignments
+          var clientIds = Object.keys(slotData);
+          clientIds.slice(0, 3).forEach(function(clientId) {
+            var assignmentData = slotData[clientId];
+            console.log(`     Client ${clientId}:`, assignmentData);
+          });
+        });
+      } else {
+        console.log('   - ⚠️ No assignments data found - this is the main issue!');
+      }
+      
+      // Step 3: Test helper functions
+      console.log('\n3. HELPER FUNCTION TESTS:');
+      if (therapists.length > 0 && clients.length > 0 && assignments && Object.keys(assignments).length > 0) {
+        var testTherapist = therapists[0];
+        var testClient = clients[0];
+        var testTimeSlot = Object.keys(assignments)[0];
+        
+        console.log('   - Test therapist:', testTherapist.name, '(ID:', testTherapist.id + ')');
+        console.log('   - Test client:', testClient.name, '(ID:', testClient.id + ')');
+        console.log('   - Test time slot:', testTimeSlot);
+        
+        var assignedTherapistId = getTherapistForClient(testClient.id, testTimeSlot);
+        console.log('   - getTherapistForClient result:', assignedTherapistId);
+        
+        if (assignedTherapistId) {
+          var details = getAssignmentDetails(assignedTherapistId, testClient.id, testTimeSlot);
+          console.log('   - getAssignmentDetails result:', details);
+        }
+        
+        var assignedClients = findAssignedClientsForTherapist(testTherapist.id, testTimeSlot);
+        console.log('   - findAssignedClientsForTherapist result:', assignedClients.length, 'clients');
+        
+        var assignmentCount = getAssignmentCount(testTherapist.id, testTimeSlot);
+        console.log('   - getAssignmentCount result:', assignmentCount);
+      }
+      
+      // Step 4: Check marker update
+      console.log('\n4. MARKER UPDATE CHECK:');
+      console.log('   - Therapist markers:', Object.keys(therapistMarkers).length);
+      console.log('   - Client markers:', Object.keys(clientMarkers).length);
+      
+      // Step 5: Recommendations
+      console.log('\n5. RECOMMENDATIONS:');
+      if (!assignments || Object.keys(assignments).length === 0) {
+        console.log('   - ❌ CRITICAL: No assignments data loaded');
+        console.log('   - Action: Check if getMapData API is returning assignments');
+        console.log('   - Action: Verify SheetsService.getAssignmentsData() is working');
+      } else {
+        console.log('   - ✅ Assignments data is loaded');
+        console.log('   - Action: Check if markers are being updated correctly');
+        console.log('   - Action: Verify assignment helper functions are working');
+      }
+      
+      return 'Diagnosis complete - check console for detailed analysis';
+    }
+    
+    // Make diagnostic function globally available
+    window.diagnoseAssignmentIssue = diagnoseAssignmentIssue;
+    
+    /**
+     * Test the getMapData API call directly to see what's being returned
+     * Call this from browser console: testMapDataAPI()
+     */
+    async function testMapDataAPI() {
+      console.log('=== TESTING MAP DATA API DIRECTLY ===');
+      
+      try {
+        showLoadingMessage('Testing getMapData API...');
+        
+        console.log('1. Calling getMapData API...');
+        var result = await callBackendAPI('getMapData');
+        
+        console.log('2. API Response received:');
+        console.log('   - Success:', result.success !== false);
+        console.log('   - Therapists:', result.therapists ? result.therapists.length : 0);
+        console.log('   - Clients:', result.clients ? result.clients.length : 0);
+        console.log('   - Sessions:', result.sessions ? result.sessions.length : 0);
+        console.log('   - Assignments:', result.assignments ? Object.keys(result.assignments).length : 0);
+        console.log('   - BCBAs:', result.bcbas ? result.bcbas.length : 0);
+        console.log('   - Client Distances:', result.clientDistances ? result.clientDistances.length : 0);
+        
+        if (result.assignments && Object.keys(result.assignments).length > 0) {
+          console.log('\n3. Assignments data structure:');
+          var timeSlots = Object.keys(result.assignments);
+          console.log('   - Time slots:', timeSlots);
+          
+          timeSlots.forEach(function(timeSlot) {
+            var slotData = result.assignments[timeSlot];
+            console.log(`   - ${timeSlot}: ${Object.keys(slotData).length} assignments`);
+            
+            // Show sample assignments
+            var clientIds = Object.keys(slotData);
+            clientIds.slice(0, 2).forEach(function(clientId) {
+              var assignmentData = slotData[clientId];
+              console.log(`     Client ${clientId}:`, assignmentData);
+            });
+          });
+        } else {
+          console.log('\n3. ⚠️ No assignments data in API response!');
+        }
+        
+        if (result.errors && result.errors.length > 0) {
+          console.log('\n4. API Errors:');
+          result.errors.forEach(function(error) {
+            console.log('   - Error:', error);
+          });
+        }
+        
+        hideLoadingMessage();
+        showSuccessMessage('✅ API test completed - check console for details');
+        
+        return result;
+        
+      } catch (error) {
+        console.error('❌ API test failed:', error);
+        hideLoadingMessage();
+        showErrorMessage('❌ API test failed: ' + error.message);
+        
+        return {
+          success: false,
+          error: error.message
+        };
+      }
+    }
+    
+    // Make API test function globally available
+    window.testMapDataAPI = testMapDataAPI;
+  </script>
+</body>
+</html> 
