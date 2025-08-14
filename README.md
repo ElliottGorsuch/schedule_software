@@ -26,9 +26,6 @@ Built entirely on Google’s platform (Apps Script, Sheets, and Maps), all data 
 
 This repository is a **redacted portfolio snapshot** of the original codebase.  Sensitive data and proprietary business logic have been removed, leaving just enough structure and sample code to demonstrate the architecture and coding style.
 
-<p align="center">
-  <img src="docs/demo_dashboard.png" width="700" alt="Dashboard screenshot"/>
-</p>
 
 ---
 
