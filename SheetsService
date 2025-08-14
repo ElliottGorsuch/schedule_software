@@ -1,0 +1,2002 @@
+/**
+ * SheetsService.gs - Database layer for Google Sheets
+ * Replaces all Wix Data operations with Google Sheets operations
+ * Public release hardening: avoids sensitive logging and relies on configured SPREADSHEET_ID.
+ */
+
+// Lightweight debug logger gated by DEBUG_MODE script property or global
+function debugLog() {
+  var isDebug = false;
+  try {
+    // Prefer global DEBUG_MODE if defined
+    if (typeof DEBUG_MODE !== 'undefined') {
+      isDebug = !!DEBUG_MODE;
+    } else {
+      var prop = PropertiesService.getScriptProperties().getProperty('DEBUG_MODE');
+      isDebug = prop === 'true';
+    }
+  } catch (e) {
+    isDebug = false;
+  }
+  if (isDebug && typeof console !== 'undefined' && console && console.log) {
+    // eslint-disable-next-line prefer-rest-params
+    console.log.apply(console, arguments);
+  }
+}
+
+class SheetsService {
+  constructor() {
+    // Use configured spreadsheet if available; fallback to active if missing
+    try {
+      this.spreadsheet = SheetsService.getSpreadsheet();
+    } catch (e) {
+      this.spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+    }
+    
+    // Get references to all sheets
+    this.therapistsSheet = this.spreadsheet.getSheetByName('Therapists');
+    this.clientsSheet = this.spreadsheet.getSheetByName('Clients');
+    this.sessionsSheet = this.spreadsheet.getSheetByName('Sessions');
+    this.assignmentsSheet = this.spreadsheet.getSheetByName('Assignments');
+    this.notesSheet = this.spreadsheet.getSheetByName('Notes');
+    
+    // Verify sheets exist
+    if (!this.therapistsSheet || !this.clientsSheet || !this.sessionsSheet || !this.assignmentsSheet) {
+      throw new Error('Required sheets not found. Please ensure Therapists, Clients, Sessions, and Assignments sheets exist.');
+    }
+  }
+  
+  /**
+   * Get the main spreadsheet
+   */
+  static getSpreadsheet() {
+    try {
+      if (typeof SPREADSHEET_ID !== 'undefined' && SPREADSHEET_ID) {
+        return SpreadsheetApp.openById(SPREADSHEET_ID);
+      }
+    } catch (e) {
+      // fall through to active spreadsheet
+    }
+    return SpreadsheetApp.getActiveSpreadsheet();
+  }
+  
+  /**
+   * Get therapists data - replaces wixData.query("Import452")
+   */
+  static getTherapistsData() {
+    try {
+      debugLog('[THERAPISTS] Loading therapist data from sheet...');
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.THERAPISTS);
+      const data = sheet.getDataRange().getValues();
+      
+      if (data.length <= 1) {
+        debugLog('[THERAPISTS] No data found or only headers');
+        return [];
+      }
+      
+      const headers = data[0];
+      debugLog('[THERAPISTS] Headers found:', headers);
+      
+      // Find column indices dynamically based on headers
+      const getColumnIndex = (possibleNames) => {
+        for (const name of possibleNames) {
+          const index = headers.findIndex(h => h && h.toString().toLowerCase().includes(name.toLowerCase()));
+          if (index !== -1) return index;
+        }
+        return -1;
+      };
+      
+      // Map column indices
+      const colIndexes = {
+        firstName: getColumnIndex(['firstname', 'first']),
+        lastName: getColumnIndex(['lastname', 'last']),
+        homeAddressLine1: getColumnIndex(['homeaddressline1', 'address', 'homeaddress']),
+        lat: getColumnIndex(['latitude', 'lat']),
+        lng: getColumnIndex(['longitude', 'lng', 'long']),
+        homeAddressLine2: getColumnIndex(['homeaddressline2']),
+        zipCode: getColumnIndex(['zipcode', 'zip']),
+        fullName: getColumnIndex(['fullname', 'name']),
+        title: getColumnIndex(['title']),
+        lead: getColumnIndex(['lead'])
+      };
+      
+      debugLog('[THERAPISTS] Column mapping:', colIndexes);
+      
+      const therapists = data.slice(1).map((row, index) => {
+        // Generate ID based on row number if no ID column exists
+        const firstName = colIndexes.firstName >= 0 ? row[colIndexes.firstName] : '';
+        const lastName = colIndexes.lastName >= 0 ? row[colIndexes.lastName] : '';
+        const fullName = colIndexes.fullName >= 0 ? row[colIndexes.fullName] : '';
+        const leadValue = colIndexes.lead >= 0 ? row[colIndexes.lead] : '';
+        
+        // Debug lead reading for first few therapists
+        if (index < 3) {
+          debugLog(`[THERAPISTS] Row ${index + 1}: Lead column (${colIndexes.lead}):`, leadValue);
+        }
+        
+        return {
+          id: row[0], // Use the ID from column A (stable sheet ID)
+          firstName: firstName,
+          lastName: lastName,
+          address: colIndexes.homeAddressLine1 >= 0 ? row[colIndexes.homeAddressLine1] : '',
+          lat: colIndexes.lat >= 0 ? row[colIndexes.lat] : null,
+          lng: colIndexes.lng >= 0 ? row[colIndexes.lng] : null,
+          homeAddressLine1: colIndexes.homeAddressLine1 >= 0 ? row[colIndexes.homeAddressLine1] : '',
+          homeAddressLine2: colIndexes.homeAddressLine2 >= 0 ? row[colIndexes.homeAddressLine2] : '',
+          zipCode: colIndexes.zipCode >= 0 ? row[colIndexes.zipCode] : '',
+          name: fullName || `${firstName} ${lastName}`.trim(),
+          title: colIndexes.title >= 0 ? (row[colIndexes.title] || 'RBT') : 'RBT',
+          lead: leadValue || 'Unassigned'
+        };
+      }).filter(therapist => therapist.firstName && therapist.lastName); // Filter out empty rows
+      
+      debugLog(`[THERAPISTS] Successfully loaded ${therapists.length} therapists`);
+      
+      // Debug lead assignments for first few therapists
+      therapists.slice(0, 3).forEach(t => {
+        debugLog(`[THERAPISTS] ${t.name} (ID: ${t.id}) - Lead: "${t.lead}"`);
+      });
+      
+      return therapists;
+      
+    } catch (error) {
+      console.error('[THERAPISTS] Error loading therapist data:', error);
+      return [];
+    }
+  }
+  
+  /**
+   * Get clients data - replaces wixData.query("Import329")
+   */
+  static getClientsData() {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.CLIENTS);
+    const data = sheet.getDataRange().getValues();
+    
+    if (data.length <= 1) return []; // No data or just headers
+    
+    return data.slice(1).map(row => {
+      return {
+        id: row[3], // clientId (column D in your current structure)
+        firstName: row[0],
+        lastName: row[1],
+        address: row[2],
+        preferredDays: row[4],
+        lat: row[5], // Latitude
+        lng: row[6], // Longitude
+        city: row[7], // City
+        zipCode: row[8], // ZipPostalCode
+        name: `${row[0]} ${row[1]}`.trim() // Computed fullName
+      };
+    }).filter(client => client.id); // Filter out empty rows
+  }
+  
+  /**
+   * Get sessions data - replaces wixData.query("Import229")
+   */
+  static getSessionsData() {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.SESSIONS);
+    const data = sheet.getDataRange().getValues();
+    
+    if (data.length <= 1) return []; // No data or just headers
+    
+    return data.slice(1).map(row => {
+      const therapistId = row[0];
+      const clientId = row[1];
+      const travelTime = row[2];
+      const distance = row[3];
+      
+      return {
+        therapistId: therapistId,
+        clientId: clientId,
+        travelTime_minutes: travelTime,
+        distance_miles: distance,
+        // Computed fields that your map component expects
+        distance_text: `${distance} miles`,
+        duration_text: `${travelTime} mins`,
+        title: `T${therapistId}-C${clientId}`
+      };
+    }).filter(session => session.therapistId && session.clientId);
+  }
+  
+  /**
+   * Get assignments data as nested object structure with multi-therapist support
+   * @returns {Object} Nested object: { timeSlot: { clientId: { therapistIds: [id1, id2], assignmentType, assignmentStatus, startDate, notes, scheduleType, multiTherapistGroupId } } }
+   */
+  static getAssignmentsData() {
+    try {
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+      const data = sheet.getDataRange().getValues();
+      const assignments = {};
+      
+      debugLog(`[SHEETS] Loading assignments data from ${data.length - 1} rows`);
+      
+      // Skip header row (row 0)
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        
+        // Handle empty rows
+        if (!row[0] || !row[1] || !row[2]) continue;
+        
+        // Correct column order: timeSlot, therapistId, clientId, assignmentType, assignmentStatus, startDate, notes, scheduleType, multiTherapistGroupId
+        const timeSlot = String(row[0]);
+        const therapistId = String(row[1]);
+        const clientId = String(row[2]);
+        const assignmentType = row[3] || 'regular';
+        const assignmentStatus = row[4] || 'red';
+        const startDate = row[5] || '';
+        const notes = row[6] || '';
+        const scheduleType = row[7] || 'current';
+        const multiTherapistGroupId = row[8] || ''; // Read multiTherapistGroupId from column I
+        
+        // Initialize nested structure
+        if (!assignments[timeSlot]) {
+          assignments[timeSlot] = {};
+        }
+        
+        if (!assignments[timeSlot][clientId]) {
+          // Create new assignment with therapistIds array and multiTherapistGroupId
+          assignments[timeSlot][clientId] = {
+            therapistIds: [therapistId],
+            assignmentType: assignmentType,
+            assignmentStatus: assignmentStatus,
+            startDate: startDate,
+            notes: notes,
+            scheduleType: scheduleType,
+            multiTherapistGroupId: multiTherapistGroupId,
+            isMultiTherapist: false // Will be updated if multiple therapists found
+          };
+        } else {
+          // Add additional therapist to existing assignment
+          const existing = assignments[timeSlot][clientId];
+          if (!existing.therapistIds.includes(therapistId)) {
+            existing.therapistIds.push(therapistId);
+            existing.isMultiTherapist = true; // Mark as multi-therapist
+          }
+          
+          // Preserve multiTherapistGroupId if not already set
+          if (!existing.multiTherapistGroupId && multiTherapistGroupId) {
+            existing.multiTherapistGroupId = multiTherapistGroupId;
+          }
+        }
+      }
+      
+      // Mark assignments with multiple therapists
+      Object.keys(assignments).forEach(timeSlot => {
+        Object.keys(assignments[timeSlot]).forEach(clientId => {
+          const assignment = assignments[timeSlot][clientId];
+          if (assignment.therapistIds.length > 1) {
+            assignment.isMultiTherapist = true;
+            assignment.therapistCount = assignment.therapistIds.length;
+          }
+        });
+      });
+      
+      debugLog(`[SHEETS] Loaded assignments data with multi-therapist support: ${Object.keys(assignments).length} time slots`);
+      return assignments;
+      
+    } catch (error) {
+      console.error('[SHEETS] Error loading assignments data:', error);
+      return {};
+    }
+  }
+  
+  /**
+   * Get assignments filtered by schedule type (for bulk copying)
+   */
+  static getAssignmentsByScheduleType(scheduleType) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    const data = sheet.getDataRange().getValues();
+    
+    if (data.length <= 1) return []; // No data or just headers
+    
+    const assignments = [];
+    
+    data.slice(1).forEach(row => {
+      const timeSlot = row[0];
+      const therapistId = String(row[1]);
+      const clientId = String(row[2]);
+      const assignmentType = row[3] || 'regular';
+      const assignmentStatus = row[4] || 'red';
+      const startDate = row[5] || '';
+      const notes = row[6] || '';
+      const rowScheduleType = row[7] || 'current';
+      
+      // Filter by schedule type
+      if (rowScheduleType === scheduleType && timeSlot && therapistId && clientId) {
+        assignments.push({
+          timeSlot: timeSlot,
+          therapistId: therapistId,
+          clientId: clientId,
+          assignmentType: assignmentType,
+          assignmentStatus: assignmentStatus,
+          startDate: startDate,
+          notes: notes,
+          scheduleType: rowScheduleType
+        });
+      }
+    });
+    
+    return assignments;
+  }
+  
+  /**
+   * Get notes data (currently empty, but ready for future use)
+   */
+  static getNotesData() {
+    try {
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.NOTES);
+      const data = sheet.getDataRange().getValues();
+      
+      if (data.length <= 1) return {}; // No data or just headers
+      
+      const notes = {};
+      data.slice(1).forEach(row => {
+        const therapistId = row[1];
+        const timeBlock = row[2];
+        const noteText = row[3];
+        
+        if (therapistId && timeBlock && noteText) {
+          const noteKey = `${therapistId}-${timeBlock}`;
+          notes[noteKey] = noteText;
+        }
+      });
+      
+      return notes;
+    } catch (error) {
+      debugLog('Notes sheet not found or empty, returning empty notes');
+      return {};
+    }
+  }
+  
+  /**
+   * Add new therapist - replaces wixData.insert("Import452")
+   * Fixed to properly handle dynamic column mapping and set the name field correctly
+   */
+  static addTherapist(therapistData) {
+    try {
+      debugLog('[SHEETS] Adding new therapist with dynamic column mapping');
+      
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.THERAPISTS);
+      
+      // Get next available ID  
+      const newId = this.getNextId(SHEET_NAMES.THERAPISTS, 0);
+      debugLog('[SHEETS] Generated therapist ID:', newId);
+      
+      // Construct the full name properly - THIS IS THE KEY FIX
+      const firstName = therapistData.firstName || '';
+      const lastName = therapistData.lastName || '';
+      const fullName = `${firstName} ${lastName}`.trim();
+      
+      debugLog('[SHEETS] Name construction');
+      
+      // Get headers to map data correctly using same logic as getTherapistsData()
+      const data = sheet.getDataRange().getValues();
+      const headers = data[0];
+      debugLog('[SHEETS] Available columns:', headers);
+      
+      // Find column indices dynamically based on headers (same logic as getTherapistsData)
+      const getColumnIndex = (possibleNames) => {
+        for (const name of possibleNames) {
+          const index = headers.findIndex(h => h && h.toString().toLowerCase().includes(name.toLowerCase()));
+          if (index !== -1) return index;
+        }
+        return -1;
+      };
+      
+      // Map column indices
+      const colIndexes = {
+        id: getColumnIndex(['id']),
+        firstName: getColumnIndex(['firstname', 'first']),
+        lastName: getColumnIndex(['lastname', 'last']),
+        homeAddressLine1: getColumnIndex(['homeaddressline1', 'address', 'homeaddress']),
+        lat: getColumnIndex(['latitude', 'lat']),
+        lng: getColumnIndex(['longitude', 'lng', 'long']),
+        homeAddressLine2: getColumnIndex(['homeaddressline2']),
+        zipCode: getColumnIndex(['zipcode', 'zip']),
+        fullName: getColumnIndex(['fullname', 'name']),
+        title: getColumnIndex(['title']),
+        lead: getColumnIndex(['lead'])
+      };
+      
+      debugLog('[SHEETS] Column mapping:', colIndexes);
+      
+      // Create new row data - map to correct columns dynamically
+      const newRow = new Array(headers.length).fill('');
+      
+      // Set values based on column mapping
+      if (colIndexes.id >= 0) newRow[colIndexes.id] = newId;
+      if (colIndexes.firstName >= 0) newRow[colIndexes.firstName] = firstName;
+      if (colIndexes.lastName >= 0) newRow[colIndexes.lastName] = lastName;
+      if (colIndexes.fullName >= 0) newRow[colIndexes.fullName] = fullName;  // ✅ KEY FIX: Set the name field!
+      if (colIndexes.title >= 0) newRow[colIndexes.title] = therapistData.title || 'RBT';
+      if (colIndexes.homeAddressLine1 >= 0) newRow[colIndexes.homeAddressLine1] = therapistData.address || '';
+      if (colIndexes.lat >= 0) newRow[colIndexes.lat] = therapistData.latitude || '';
+      if (colIndexes.lng >= 0) newRow[colIndexes.lng] = therapistData.longitude || '';
+      if (colIndexes.zipCode >= 0) newRow[colIndexes.zipCode] = therapistData.zipCode || '';
+      if (colIndexes.lead >= 0) newRow[colIndexes.lead] = therapistData.lead || 'Unassigned';
+      if (colIndexes.homeAddressLine2 >= 0) newRow[colIndexes.homeAddressLine2] = therapistData.homeAddressLine2 || '';
+      
+      debugLog('[SHEETS] Adding row');
+      debugLog('[SHEETS] Name field (column ' + colIndexes.fullName + '):', newRow[colIndexes.fullName]);
+      
+      // Add the row to the sheet
+      sheet.appendRow(newRow);
+      
+      debugLog('[SHEETS] Successfully added therapist with ID:', newId);
+      
+      return newId;
+      
+    } catch (error) {
+      console.error('[SHEETS] Error adding therapist:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Add new client - replaces wixData.insert("Import329")
+   * Fixed to properly handle dynamic column mapping and set the name field correctly
+   */
+  static addClient(clientData) {
+    try {
+      debugLog('[SHEETS] Adding new client with dynamic column mapping');
+      
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.CLIENTS);
+      
+      // Get next available ID
+      const newId = this.getNextId(SHEET_NAMES.CLIENTS, 3); // Column D (clientId) 
+      debugLog('[SHEETS] Generated client ID:', newId);
+      
+      // Construct the full name properly
+      const firstName = clientData.firstName || '';
+      const lastName = clientData.lastName || '';
+      const fullName = `${firstName} ${lastName}`.trim();
+      
+      debugLog('[SHEETS] Client name construction');
+      
+      // Get headers to map data correctly
+      const data = sheet.getDataRange().getValues();
+      const headers = data[0];
+      debugLog('[SHEETS] Available client columns:', headers);
+      
+      // Find column indices dynamically based on headers
+      const getColumnIndex = (possibleNames) => {
+        for (const name of possibleNames) {
+          const index = headers.findIndex(h => h && h.toString().toLowerCase().includes(name.toLowerCase()));
+          if (index !== -1) return index;
+        }
+        return -1;
+      };
+      
+      // Map column indices for clients
+      const colIndexes = {
+        firstName: getColumnIndex(['firstname', 'first']),
+        lastName: getColumnIndex(['lastname', 'last']),
+        address: getColumnIndex(['address']),
+        clientId: getColumnIndex(['clientid', 'id']),
+        preferredDays: getColumnIndex(['preferreddays', 'preferred']),
+        lat: getColumnIndex(['latitude', 'lat']),
+        lng: getColumnIndex(['longitude', 'lng', 'long']),
+        city: getColumnIndex(['city']),
+        zipCode: getColumnIndex(['zipcode', 'zip', 'postal']),
+        fullName: getColumnIndex(['fullname', 'name'])
+      };
+      
+      debugLog('[SHEETS] Client column mapping:', colIndexes);
+      
+      // Create new row data - map to correct columns dynamically
+      const newRow = new Array(headers.length).fill('');
+      
+      // Set values based on column mapping
+      if (colIndexes.firstName >= 0) newRow[colIndexes.firstName] = firstName;
+      if (colIndexes.lastName >= 0) newRow[colIndexes.lastName] = lastName;
+      if (colIndexes.fullName >= 0) newRow[colIndexes.fullName] = fullName;  // ✅ Set the name field!
+      if (colIndexes.address >= 0) newRow[colIndexes.address] = clientData.address || '';
+      if (colIndexes.clientId >= 0) newRow[colIndexes.clientId] = newId;
+      if (colIndexes.preferredDays >= 0) newRow[colIndexes.preferredDays] = clientData.preferredDays || '';
+      if (colIndexes.lat >= 0) newRow[colIndexes.lat] = clientData.latitude || '';
+      if (colIndexes.lng >= 0) newRow[colIndexes.lng] = clientData.longitude || '';
+      if (colIndexes.city >= 0) newRow[colIndexes.city] = clientData.city || '';
+      if (colIndexes.zipCode >= 0) newRow[colIndexes.zipCode] = clientData.zipCode || '';
+      
+      debugLog('[SHEETS] Adding client row');
+      debugLog('[SHEETS] Client name field (column ' + colIndexes.fullName + '):', newRow[colIndexes.fullName]);
+      
+      // Add the row to the sheet
+      sheet.appendRow(newRow);
+      
+      debugLog('[SHEETS] Successfully added client with ID:', newId);
+      
+      return newId;
+      
+    } catch (error) {
+      console.error('[SHEETS] Error adding client:', error);
+      throw error;
+    }
+  }
+  
+  /**
+   * Add new assignment - replaces wixData.insert("Assignments")
+   */
+  static addAssignment(assignmentData) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    
+    const row = [
+      assignmentData.timeSlot,
+      assignmentData.therapistId,
+      assignmentData.clientId,
+      assignmentData.assignmentType || 'regular',
+      assignmentData.assignmentStatus || 'red',
+      assignmentData.startDate || '',
+      assignmentData.notes || '',
+      assignmentData.scheduleType || 'current'  // Add scheduleType to column 7
+    ];
+    
+    sheet.appendRow(row);
+    return sheet.getLastRow(); // Return row number as ID
+  }
+  
+  /**
+   * Find existing assignment with optional therapist filter
+   */
+  static findAssignment(timeSlot, clientId, therapistId = null, scheduleType = null) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    const data = sheet.getDataRange().getValues();
+    
+    for (let i = 1; i < data.length; i++) {
+      const matchesTimeSlot = data[i][0] === timeSlot;
+      const matchesClient = String(data[i][2]) === String(clientId);
+      const matchesTherapist = therapistId === null || String(data[i][1]) === String(therapistId);
+      const matchesScheduleType = scheduleType === null || (data[i][7] || 'current') === scheduleType;
+      
+      if (matchesTimeSlot && matchesClient && matchesTherapist && matchesScheduleType) {
+        return {
+          row: i + 1,
+          timeSlot: data[i][0],
+          therapistId: data[i][1],
+          clientId: data[i][2],
+          scheduleType: data[i][7] || 'current'
+        };
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Find therapist assignment for a specific time slot
+   */
+  static findTherapistAssignment(therapistId, timeSlot, scheduleType = null) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    const data = sheet.getDataRange().getValues();
+    
+    for (let i = 1; i < data.length; i++) {
+      const matchesTherapist = String(data[i][1]) === String(therapistId);
+      const matchesTimeSlot = data[i][0] === timeSlot;
+      const matchesScheduleType = scheduleType === null || (data[i][7] || 'current') === scheduleType;
+      
+      if (matchesTherapist && matchesTimeSlot && matchesScheduleType) {
+        return {
+          row: i + 1,
+          timeSlot: data[i][0],
+          therapistId: data[i][1],
+          clientId: data[i][2],
+          scheduleType: data[i][7] || 'current'
+        };
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Update existing assignment
+   */
+  static updateAssignment(rowNumber, assignmentData) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    
+    sheet.getRange(rowNumber, 1, 1, 8).setValues([[
+      assignmentData.timeSlot,
+      assignmentData.therapistId,
+      assignmentData.clientId,
+      assignmentData.assignmentType || 'regular',
+      assignmentData.assignmentStatus || 'red',
+      assignmentData.startDate || '',
+      assignmentData.notes || '',
+      assignmentData.scheduleType || 'current'  // Include scheduleType in column 7
+    ]]);
+    
+    return rowNumber;
+  }
+  
+  /**
+   * Delete assignment with optional therapist filter
+   */
+  static deleteAssignment(timeSlot, clientId, therapistId = null, scheduleType = null) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    const data = sheet.getDataRange().getValues();
+    let deletedCount = 0;
+    
+    // Go backwards to avoid index shifting issues
+    for (let i = data.length - 1; i >= 1; i--) {
+      const matchesTimeSlot = data[i][0] === timeSlot;
+      const matchesClient = String(data[i][2]) === String(clientId);
+      const matchesTherapist = therapistId === null || String(data[i][1]) === String(therapistId);
+      const matchesScheduleType = scheduleType === null || (data[i][7] || 'current') === scheduleType;
+      
+      if (matchesTimeSlot && matchesClient && matchesTherapist && matchesScheduleType) {
+        sheet.deleteRow(i + 1);
+        deletedCount++;
+      }
+    }
+    
+    return deletedCount;
+  }
+  
+  /**
+   * Delete all assignments for a therapist in a time slot
+   */
+  static deleteTherapistAssignments(therapistId, timeSlot = null, scheduleType = null) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    const data = sheet.getDataRange().getValues();
+    let deletedCount = 0;
+    
+    // Go backwards to avoid index shifting issues
+    for (let i = data.length - 1; i >= 1; i--) {
+      const rowTherapistId = String(data[i][1]);
+      const rowTimeSlot = data[i][0];
+      const rowScheduleType = data[i][7] || 'current';
+      
+      const matchesTherapist = String(therapistId) === rowTherapistId;
+      const matchesTimeSlot = timeSlot === null || rowTimeSlot === timeSlot;
+      const matchesScheduleType = scheduleType === null || rowScheduleType === scheduleType;
+      
+      if (matchesTherapist && matchesTimeSlot && matchesScheduleType) {
+        sheet.deleteRow(i + 1);
+        deletedCount++;
+      }
+    }
+    
+    return deletedCount;
+  }
+  
+  /**
+   * Clear all assignments for a therapist from a specific schedule type
+   */
+  static clearTherapistFromSchedule(therapistId, scheduleType) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    const data = sheet.getDataRange().getValues();
+    let deletedCount = 0;
+    
+    // Go backwards to avoid index shifting issues
+    for (let i = data.length - 1; i >= 1; i--) {
+      const rowTherapistId = String(data[i][1]);
+      const rowScheduleType = data[i][7] || 'current';
+      
+      const matchesTherapist = String(therapistId) === rowTherapistId;
+      const matchesScheduleType = rowScheduleType === scheduleType;
+      
+      if (matchesTherapist && matchesScheduleType) {
+        sheet.deleteRow(i + 1);
+        deletedCount++;
+      }
+    }
+    
+    return deletedCount;
+  }
+  
+  /**
+   * Clear all assignments from a specific schedule type
+   */
+  static clearScheduleType(scheduleType) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    const data = sheet.getDataRange().getValues();
+    let deletedCount = 0;
+    
+    // Go backwards to avoid index shifting issues
+    for (let i = data.length - 1; i >= 1; i--) {
+      const rowScheduleType = data[i][7] || 'current';
+      
+      if (rowScheduleType === scheduleType) {
+        sheet.deleteRow(i + 1);
+        deletedCount++;
+      }
+    }
+    
+    return deletedCount;
+  }
+  
+  /**
+   * Delete all assignments for a client
+   */
+  static deleteClientAssignments(clientId) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    const data = sheet.getDataRange().getValues();
+    let deletedCount = 0;
+    
+    // Go backwards to avoid index shifting issues
+    for (let i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][2]) === String(clientId)) {
+        sheet.deleteRow(i + 1);
+        deletedCount++;
+      }
+    }
+    
+    return deletedCount;
+  }
+  
+  /**
+   * Delete all sessions for a client
+   */
+  static deleteClientSessions(clientId) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.SESSIONS);
+    const data = sheet.getDataRange().getValues();
+    let deletedCount = 0;
+    
+    // Go backwards to avoid index shifting issues
+    for (let i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][1]) === String(clientId)) {
+        sheet.deleteRow(i + 1);
+        deletedCount++;
+      }
+    }
+    
+    return deletedCount;
+  }
+  
+  /**
+   * Delete therapist record
+   */
+  static deleteTherapist(therapistId) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.THERAPISTS);
+    const data = sheet.getDataRange().getValues();
+    
+    for (let i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][0]) === String(therapistId)) {
+        sheet.deleteRow(i + 1);
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Delete client record
+   */
+  static deleteClient(clientId) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.CLIENTS);
+    const data = sheet.getDataRange().getValues();
+    
+    for (let i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][3]) === String(clientId)) { // clientId is in column D (index 3)
+        sheet.deleteRow(i + 1);
+        return true;
+      }
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Get next available ID for a sheet
+   */
+  static getNextId(sheetName, columnIndex) {
+    const sheet = this.getSpreadsheet().getSheetByName(sheetName);
+    const data = sheet.getDataRange().getValues();
+    
+    if (data.length <= 1) return 1; // No data, start with 1
+    
+    let maxId = 0;
+    for (let i = 1; i < data.length; i++) {
+      const id = Number(data[i][columnIndex]);
+      if (id > maxId) {
+        maxId = id;
+      }
+    }
+    
+    return maxId + 1;
+  }
+
+  // THERAPISTS OPERATIONS
+  
+  /**
+   * Get all therapists
+   * Replaces: wixData.query("Import452")
+   */
+  getAllTherapists() {
+    try {
+      const data = this.therapistsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const rows = data.slice(1);
+      
+      return rows.map(row => {
+        const therapist = {};
+        headers.forEach((header, index) => {
+          therapist[header] = row[index];
+        });
+        return therapist;
+      }).filter(therapist => therapist._id); // Filter out empty rows
+    } catch (error) {
+      console.error('Error getting therapists:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get therapist by ID
+   */
+  getTherapistById(therapistId) {
+    const therapists = this.getAllTherapists();
+    return therapists.find(t => t._id === therapistId);
+  }
+
+  /**
+   * Add new therapist
+   */
+  addTherapist(therapistData) {
+    try {
+      const newId = this.generateId();
+      const newTherapist = {
+        _id: newId,
+        ...therapistData
+      };
+      
+      const headers = this.therapistsSheet.getRange(1, 1, 1, this.therapistsSheet.getLastColumn()).getValues()[0];
+      const newRow = headers.map(header => newTherapist[header] || '');
+      
+      this.therapistsSheet.appendRow(newRow);
+      return newTherapist;
+    } catch (error) {
+      console.error('Error adding therapist:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update therapist
+   */
+  updateTherapist(therapistId, updateData) {
+    try {
+      const data = this.therapistsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const idColumnIndex = headers.indexOf('_id');
+      
+      if (idColumnIndex === -1) {
+        throw new Error('_id column not found');
+      }
+      
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][idColumnIndex] === therapistId) {
+          // Update the row
+          Object.keys(updateData).forEach(key => {
+            const columnIndex = headers.indexOf(key);
+            if (columnIndex !== -1) {
+              this.therapistsSheet.getRange(i + 1, columnIndex + 1).setValue(updateData[key]);
+            }
+          });
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Error updating therapist:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete therapist
+   */
+  deleteTherapist(therapistId) {
+    try {
+      const data = this.therapistsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const idColumnIndex = headers.indexOf('_id');
+      
+      if (idColumnIndex === -1) {
+        throw new Error('_id column not found');
+      }
+      
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][idColumnIndex] === therapistId) {
+          this.therapistsSheet.deleteRow(i + 1);
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Error deleting therapist:', error);
+      throw error;
+    }
+  }
+
+  // CLIENTS OPERATIONS
+  
+  /**
+   * Get all clients
+   * Replaces: wixData.query("Import329")
+   */
+  getAllClients() {
+    try {
+      const data = this.clientsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const rows = data.slice(1);
+      
+      return rows.map(row => {
+        const client = {};
+        headers.forEach((header, index) => {
+          client[header] = row[index];
+        });
+        return client;
+      }).filter(client => client._id); // Filter out empty rows
+    } catch (error) {
+      console.error('Error getting clients:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get client by ID
+   */
+  getClientById(clientId) {
+    const clients = this.getAllClients();
+    return clients.find(c => c._id === clientId);
+  }
+
+  /**
+   * Add new client
+   */
+  addClient(clientData) {
+    try {
+      const newId = this.generateId();
+      const newClient = {
+        _id: newId,
+        ...clientData
+      };
+      
+      const headers = this.clientsSheet.getRange(1, 1, 1, this.clientsSheet.getLastColumn()).getValues()[0];
+      const newRow = headers.map(header => newClient[header] || '');
+      
+      this.clientsSheet.appendRow(newRow);
+      return newClient;
+    } catch (error) {
+      console.error('Error adding client:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update client
+   */
+  updateClient(clientId, updateData) {
+    try {
+      const data = this.clientsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const idColumnIndex = headers.indexOf('_id');
+      
+      if (idColumnIndex === -1) {
+        throw new Error('_id column not found');
+      }
+      
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][idColumnIndex] === clientId) {
+          // Update the row
+          Object.keys(updateData).forEach(key => {
+            const columnIndex = headers.indexOf(key);
+            if (columnIndex !== -1) {
+              this.clientsSheet.getRange(i + 1, columnIndex + 1).setValue(updateData[key]);
+            }
+          });
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Error updating client:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete client
+   */
+  deleteClient(clientId) {
+    try {
+      const data = this.clientsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const idColumnIndex = headers.indexOf('_id');
+      
+      if (idColumnIndex === -1) {
+        throw new Error('_id column not found');
+      }
+      
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][idColumnIndex] === clientId) {
+          this.clientsSheet.deleteRow(i + 1);
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Error deleting client:', error);
+      throw error;
+    }
+  }
+
+  // SESSIONS OPERATIONS
+  
+  /**
+   * Get all sessions
+   * Replaces: wixData.query("Import229")
+   */
+  getAllSessions() {
+    try {
+      const data = this.sessionsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const rows = data.slice(1);
+      
+      return rows.map(row => {
+        const session = {};
+        headers.forEach((header, index) => {
+          session[header] = row[index];
+        });
+        return session;
+      }).filter(session => session._id); // Filter out empty rows
+    } catch (error) {
+      console.error('Error getting sessions:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get sessions by therapist ID
+   */
+  getSessionsByTherapistId(therapistId) {
+    const sessions = this.getAllSessions();
+    return sessions.filter(s => s.therapistId === therapistId);
+  }
+
+  /**
+   * Get sessions by client ID
+   */
+  getSessionsByClientId(clientId) {
+    const sessions = this.getAllSessions();
+    return sessions.filter(s => s.clientId === clientId);
+  }
+
+  /**
+   * Add new session
+   */
+  addSession(sessionData) {
+    try {
+      const newId = this.generateId();
+      const newSession = {
+        _id: newId,
+        ...sessionData
+      };
+      
+      const headers = this.sessionsSheet.getRange(1, 1, 1, this.sessionsSheet.getLastColumn()).getValues()[0];
+      const newRow = headers.map(header => newSession[header] || '');
+      
+      this.sessionsSheet.appendRow(newRow);
+      return newSession;
+    } catch (error) {
+      console.error('Error adding session:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update session
+   */
+  updateSession(sessionId, updateData) {
+    try {
+      const data = this.sessionsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const idColumnIndex = headers.indexOf('_id');
+      
+      if (idColumnIndex === -1) {
+        throw new Error('_id column not found');
+      }
+      
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][idColumnIndex] === sessionId) {
+          // Update the row
+          Object.keys(updateData).forEach(key => {
+            const columnIndex = headers.indexOf(key);
+            if (columnIndex !== -1) {
+              this.sessionsSheet.getRange(i + 1, columnIndex + 1).setValue(updateData[key]);
+            }
+          });
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Error updating session:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Bulk add sessions (for distance calculations)
+   */
+  bulkAddSessions(sessionsArray) {
+    try {
+      const headers = this.sessionsSheet.getRange(1, 1, 1, this.sessionsSheet.getLastColumn()).getValues()[0];
+      
+      const newRows = sessionsArray.map(sessionData => {
+        const newSession = {
+          _id: this.generateId(),
+          ...sessionData
+        };
+        return headers.map(header => newSession[header] || '');
+      });
+      
+      if (newRows.length > 0) {
+        const startRow = this.sessionsSheet.getLastRow() + 1;
+        this.sessionsSheet.getRange(startRow, 1, newRows.length, headers.length).setValues(newRows);
+      }
+      
+      return sessionsArray.length;
+    } catch (error) {
+      console.error('Error bulk adding sessions:', error);
+      throw error;
+    }
+  }
+
+  // ASSIGNMENTS OPERATIONS
+  
+  /**
+   * Get all assignments
+   */
+  getAllAssignments() {
+    try {
+      const data = this.assignmentsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const rows = data.slice(1);
+      
+      return rows.map(row => {
+        const assignment = {};
+        headers.forEach((header, index) => {
+          assignment[header] = row[index];
+        });
+        return assignment;
+      }).filter(assignment => assignment._id); // Filter out empty rows
+    } catch (error) {
+      console.error('Error getting assignments:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Get assignments by therapist ID
+   */
+  getAssignmentsByTherapistId(therapistId) {
+    const assignments = this.getAllAssignments();
+    return assignments.filter(a => a.therapistId === therapistId);
+  }
+
+  /**
+   * Get assignments by client ID
+   */
+  getAssignmentsByClientId(clientId) {
+    const assignments = this.getAllAssignments();
+    return assignments.filter(a => a.clientId === clientId);
+  }
+
+  /**
+   * Add new assignment
+   */
+  addAssignment(assignmentData) {
+    try {
+      const newId = this.generateId();
+      const newAssignment = {
+        _id: newId,
+        ...assignmentData
+      };
+      
+      const headers = this.assignmentsSheet.getRange(1, 1, 1, this.assignmentsSheet.getLastColumn()).getValues()[0];
+      const newRow = headers.map(header => newAssignment[header] || '');
+      
+      this.assignmentsSheet.appendRow(newRow);
+      return newAssignment;
+    } catch (error) {
+      console.error('Error adding assignment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Update assignment
+   */
+  updateAssignment(assignmentId, updateData) {
+    try {
+      const data = this.assignmentsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const idColumnIndex = headers.indexOf('_id');
+      
+      if (idColumnIndex === -1) {
+        throw new Error('_id column not found');
+      }
+      
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][idColumnIndex] === assignmentId) {
+          // Update the row
+          Object.keys(updateData).forEach(key => {
+            const columnIndex = headers.indexOf(key);
+            if (columnIndex !== -1) {
+              this.assignmentsSheet.getRange(i + 1, columnIndex + 1).setValue(updateData[key]);
+            }
+          });
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Error updating assignment:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Delete assignment
+   */
+  deleteAssignment(assignmentId) {
+    try {
+      const data = this.assignmentsSheet.getDataRange().getValues();
+      const headers = data[0];
+      const idColumnIndex = headers.indexOf('_id');
+      
+      if (idColumnIndex === -1) {
+        throw new Error('_id column not found');
+      }
+      
+      for (let i = 1; i < data.length; i++) {
+        if (data[i][idColumnIndex] === assignmentId) {
+          this.assignmentsSheet.deleteRow(i + 1);
+          return true;
+        }
+      }
+      return false;
+    } catch (error) {
+      console.error('Error deleting assignment:', error);
+      throw error;
+    }
+  }
+
+  // UTILITY METHODS
+  
+  /**
+   * Generate unique ID
+   */
+  generateId() {
+    return 'id_' + Utilities.getUuid().replace(/-/g, '');
+  }
+
+  /**
+   * Format data for map component (replaces formatDataForMap from Wix)
+   */
+  formatDataForMap() {
+    try {
+      const therapists = this.getAllTherapists();
+      const clients = this.getAllClients();
+      const sessions = this.getAllSessions();
+      
+      return {
+        therapists: therapists.map(t => ({
+          id: t._id,
+          name: t.name || '',
+          address: t.address || '',
+          coordinates: {
+            lat: parseFloat(t.latitude) || 0,
+            lng: parseFloat(t.longitude) || 0
+          },
+          type: 'therapist'
+        })),
+        clients: clients.map(c => ({
+          id: c._id,
+          name: c.name || '',
+          address: c.address || '',
+          coordinates: {
+            lat: parseFloat(c.latitude) || 0,
+            lng: parseFloat(c.longitude) || 0
+          },
+          type: 'client'
+        })),
+        sessions: sessions
+      };
+    } catch (error) {
+      console.error('Error formatting data for map:', error);
+      return { therapists: [], clients: [], sessions: [] };
+    }
+  }
+
+  /**
+   * Get data summary for dashboard
+   */
+  getDataSummary() {
+    try {
+      return {
+        therapistsCount: this.getAllTherapists().length,
+        clientsCount: this.getAllClients().length,
+        sessionsCount: this.getAllSessions().length,
+        assignmentsCount: this.getAllAssignments().length
+      };
+    } catch (error) {
+      console.error('Error getting data summary:', error);
+      return {
+        therapistsCount: 0,
+        clientsCount: 0,
+        sessionsCount: 0,
+        assignmentsCount: 0
+      };
+    }
+  }
+
+  /**
+   * Search functionality (replaces Wix search)
+   */
+  searchTherapists(searchTerm) {
+    const therapists = this.getAllTherapists();
+    const term = searchTerm.toLowerCase();
+    
+    return therapists.filter(t => 
+      (t.name && t.name.toLowerCase().includes(term)) ||
+      (t.address && t.address.toLowerCase().includes(term)) ||
+      (t.email && t.email.toLowerCase().includes(term))
+    );
+  }
+
+  searchClients(searchTerm) {
+    const clients = this.getAllClients();
+    const term = searchTerm.toLowerCase();
+    
+    return clients.filter(c => 
+      (c.name && c.name.toLowerCase().includes(term)) ||
+      (c.address && c.address.toLowerCase().includes(term)) ||
+      (c.email && c.email.toLowerCase().includes(term))
+    );
+  }
+
+  /**
+   * Get assignment details including type, status, and dates
+   */
+  static getAssignmentDetails(timeSlot, clientId, therapistId = null, scheduleType = null) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+    const data = sheet.getDataRange().getValues();
+    
+    for (let i = 1; i < data.length; i++) {
+      const matchesTimeSlot = data[i][0] === timeSlot;
+      const matchesClient = String(data[i][2]) === String(clientId);
+      const matchesTherapist = therapistId === null || String(data[i][1]) === String(therapistId);
+      const matchesScheduleType = scheduleType === null || (data[i][7] || 'current') === scheduleType;
+      
+      if (matchesTimeSlot && matchesClient && matchesTherapist && matchesScheduleType) {
+        return {
+          row: i + 1,
+          timeSlot: data[i][0],
+          therapistId: data[i][1],
+          clientId: data[i][2],
+          assignmentType: data[i][3] || 'regular',
+          assignmentStatus: data[i][4] || 'red',
+          startDate: data[i][5] || '',
+          notes: data[i][6] || '',
+          scheduleType: data[i][7] || 'current'
+        };
+      }
+    }
+    
+    return null;
+  }
+  
+  /**
+   * Update assignment details (type, status, start date, notes)
+   * @param {string} timeSlot - Time slot (e.g., "Monday-Morning")
+   * @param {string} clientId - Client ID
+   * @param {string} therapistId - Therapist ID
+   * @param {string} scheduleType - Schedule type ("current" or "future")
+   * @param {string} assignmentType - Assignment type ("regular" or "playPals")
+   * @param {string} assignmentStatus - Assignment status ("red", "orange", "green")
+   * @param {string} startDate - Start date (YYYY-MM-DD format)
+   * @param {string} notes - Assignment notes
+   * @returns {object} Success status and details
+   */
+  static updateAssignmentDetails(timeSlot, clientId, therapistId, scheduleType, assignmentType, assignmentStatus, startDate, notes) {
+    try {
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+      const data = sheet.getDataRange().getValues();
+      
+      debugLog(`[SHEETS] Updating assignment details for T${therapistId}-C${clientId} at ${timeSlot} in ${scheduleType} schedule`);
+      
+      // Find the assignment row to update
+      let foundRow = -1;
+      for (let i = 1; i < data.length; i++) { // Start from 1 to skip header
+        const row = data[i];
+        const rowTimeSlot = String(row[0]);
+        const rowTherapistId = String(row[1]);
+        const rowClientId = String(row[2]);
+        const rowScheduleType = String(row[7]) || 'current'; // Column 7 is scheduleType
+        
+        if (rowTimeSlot === timeSlot && 
+            rowTherapistId === therapistId && 
+            rowClientId === clientId &&
+            rowScheduleType === scheduleType) {
+          foundRow = i;
+          break;
+        }
+      }
+      
+      if (foundRow === -1) {
+        console.error(`[SHEETS] Assignment not found for T${therapistId}-C${clientId} at ${timeSlot} in ${scheduleType} schedule`);
+        return {
+          success: false,
+          error: 'Assignment not found'
+        };
+      }
+      
+      debugLog(`[SHEETS] Found assignment at row ${foundRow + 1}`);
+      
+      // Update the assignment details
+      // Columns: timeSlot(0), therapistId(1), clientId(2), assignmentType(3), assignmentStatus(4), startDate(5), notes(6), scheduleType(7)
+      sheet.getRange(foundRow + 1, 4).setValue(assignmentType);     // Column 4: assignmentType
+      sheet.getRange(foundRow + 1, 5).setValue(assignmentStatus);  // Column 5: assignmentStatus
+      sheet.getRange(foundRow + 1, 6).setValue(startDate);         // Column 6: startDate
+      sheet.getRange(foundRow + 1, 7).setValue(notes);             // Column 7: notes
+      
+      debugLog(`[SHEETS] Successfully updated assignment details for T${therapistId}-C${clientId}`);
+      
+      return {
+        success: true,
+        message: 'Assignment details updated successfully',
+        updatedRow: foundRow + 1,
+        updatedFields: {
+          assignmentType,
+          assignmentStatus,
+          startDate,
+          notes
+        }
+      };
+      
+    } catch (error) {
+      console.error('[SHEETS] Error updating assignment details:', error);
+      return {
+        success: false,
+        error: error.message
+      };
+    }
+  }
+
+  /**
+   * Update session distance and travel time for existing session
+   * @param {number} therapistId - Therapist ID
+   * @param {number} clientId - Client ID  
+   * @param {number} travelTimeMinutes - Travel time in minutes
+   * @param {number} distanceMiles - Distance in miles
+   * @returns {boolean} Success status
+   */
+  static updateSessionDistance(therapistId, clientId, travelTimeMinutes, distanceMiles) {
+    try {
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.SESSIONS);
+      const data = sheet.getDataRange().getValues();
+      
+      // Find the session row to update
+      for (let i = 1; i < data.length; i++) { // Start from 1 to skip header
+        const rowTherapistId = String(data[i][0]);
+        const rowClientId = String(data[i][1]);
+        
+        if (rowTherapistId === String(therapistId) && rowClientId === String(clientId)) {
+          // Update the row with new values
+          sheet.getRange(i + 1, 3).setValue(travelTimeMinutes); // Column C (travelTime)
+          sheet.getRange(i + 1, 4).setValue(distanceMiles); // Column D (distance)
+          
+          debugLog(`Updated session T${therapistId}-C${clientId} with ${travelTimeMinutes} mins, ${distanceMiles} miles`);
+          return true;
+        }
+      }
+      
+      console.warn(`Session T${therapistId}-C${clientId} not found for update`);
+      return false;
+      
+    } catch (error) {
+      console.error('Error updating session distance:', error);
+      return false;
+    }
+  }
+
+  /**
+   * Get assignments in the legacy format for backwards compatibility
+   * Converts multi-therapist assignments to individual entries
+   * @returns {Object} Legacy format: { timeSlot: { clientId: { therapistId, assignmentType, assignmentStatus, startDate, notes, scheduleType } } }
+   */
+  static getAssignmentsFormatted() {
+    try {
+      const multiTherapistData = this.getAssignmentsData();
+      const legacyFormat = {};
+      
+      // Convert multi-therapist format to legacy format
+      for (const timeSlot in multiTherapistData) {
+        if (!legacyFormat[timeSlot]) {
+          legacyFormat[timeSlot] = {};
+        }
+        
+        for (const clientId in multiTherapistData[timeSlot]) {
+          const assignment = multiTherapistData[timeSlot][clientId];
+          
+          // For backwards compatibility, use the first therapist
+          legacyFormat[timeSlot][clientId] = {
+            therapistId: assignment.therapistIds[0],
+            assignmentType: assignment.assignmentType,
+            assignmentStatus: assignment.assignmentStatus,
+            startDate: assignment.startDate,
+            notes: assignment.notes,
+            scheduleType: assignment.scheduleType
+          };
+        }
+      }
+      
+      return legacyFormat;
+      
+    } catch (error) {
+      console.error('Error converting assignments to legacy format:', error);
+      return {};
+    }
+  }
+
+  /**
+   * Create or update assignment with support for multiple therapists
+   * @param {string|Array} therapistIds - Single therapist ID or array of therapist IDs
+   * @param {string} clientId - Client ID
+   * @param {string} timeSlot - Time slot
+   * @param {string} assignmentType - Assignment type
+   * @param {string} assignmentStatus - Assignment status
+   * @param {string} startDate - Start date
+   * @param {string} notes - Notes
+   * @param {string} scheduleType - Schedule type
+   * @param {string} multiTherapistGroupId - Group ID for linking multi-therapist assignments
+   * @returns {object} Success status and assignment ID
+   */
+  static createAssignment(therapistIds, clientId, timeSlot, assignmentType = 'regular', assignmentStatus = 'red', startDate = '', notes = '', scheduleType = 'current', multiTherapistGroupId = '') {
+    try {
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.ASSIGNMENTS);
+      
+      // Normalize therapistIds to array
+      const therapistArray = Array.isArray(therapistIds) ? therapistIds : [therapistIds];
+      
+      // Validate inputs
+      if (!therapistArray.length || !clientId || !timeSlot) {
+        throw new Error('Missing required parameters: therapistIds, clientId, or timeSlot');
+      }
+      
+      debugLog(`[SHEETS] Creating assignment for ${therapistArray.length} therapist(s), client ${clientId}, slot ${timeSlot}`);
+      
+      // Clear any existing assignments for this client/timeSlot/scheduleType combination
+      SheetsService.deleteAssignment(timeSlot, clientId, null, scheduleType);
+      
+      let assignmentId = null;
+      
+      // Create assignment records for each therapist
+      for (const therapistId of therapistArray) {
+        const data = sheet.getDataRange().getValues();
+        const newRowIndex = data.length; // Get next row index
+        
+        // Create assignment record with all columns including multiTherapistGroupId
+        const newAssignment = [
+          timeSlot,              // Column 0: timeSlot
+          String(therapistId),   // Column 1: therapistId
+          String(clientId),      // Column 2: clientId
+          assignmentType,        // Column 3: assignmentType
+          assignmentStatus,      // Column 4: assignmentStatus
+          startDate,             // Column 5: startDate
+          notes,                 // Column 6: notes
+          scheduleType,          // Column 7: scheduleType
+          multiTherapistGroupId  // Column 8: multiTherapistGroupId
+        ];
+        
+        // Add the new assignment to the sheet
+        sheet.getRange(newRowIndex + 1, 1, 1, newAssignment.length).setValues([newAssignment]);
+        
+        // Set assignment ID to first therapist's ID for backwards compatibility
+        if (!assignmentId) {
+          assignmentId = `${therapistId}-${clientId}-${timeSlot}-${scheduleType}`;
+        }
+        
+        debugLog(`[SHEETS] Created assignment record for therapist ${therapistId}, client ${clientId}, slot ${timeSlot}, schedule ${scheduleType}`);
+      }
+      
+      return {
+        success: true,
+        action: therapistArray.length > 1 ? 'created multi-therapist assignment' : 'created assignment',
+        assignmentId: assignmentId,
+        therapistCount: therapistArray.length,
+        assignmentDetails: {
+          therapistIds: therapistArray,
+          clientId: clientId,
+          timeSlot: timeSlot,
+          assignmentType: assignmentType,
+          assignmentStatus: assignmentStatus,
+          startDate: startDate,
+          notes: notes,
+          scheduleType: scheduleType,
+          multiTherapistGroupId: multiTherapistGroupId,
+          isMultiTherapist: therapistArray.length > 1
+        }
+      };
+      
+    } catch (error) {
+      console.error('[SHEETS] Error creating assignment:', error);
+      return {
+        success: false,
+        error: error.message
+            };
+    }
+  }
+
+  /**
+   * THERAPIST NOTES OPERATIONS
+   * Handle therapist notes stored in the Notes sheet
+   */
+
+  /**
+   * Get all therapist notes from the Notes sheet
+   * @returns {Array} Array of note objects
+   */
+  static getTherapistNotes() {
+    try {
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.NOTES);
+      
+      if (!sheet) {
+        debugLog('Notes sheet not found, returning empty array');
+        return [];
+      }
+      
+      const data = sheet.getDataRange().getValues();
+      
+      if (data.length <= 1) {
+        debugLog('No notes data found, returning empty array');
+        return [];
+      }
+      
+      debugLog(`[SHEETS] Loading ${data.length - 1} therapist notes from Notes sheet`);
+      
+      const notes = [];
+      
+      // Skip header row (row 0)
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        
+        // Handle empty rows
+        if (!row[0] || !row[1] || !row[2]) continue;
+        
+        // Column structure: noteId, therapistId, timeBlock, noteText, dateCreated, dateModified, createdBy, scheduleType
+        const noteId = row[0];
+        const therapistId = String(row[1]);
+        const timeBlock = String(row[2]);
+        const noteText = row[3] || '';
+        const dateCreated = row[4] || '';
+        const dateModified = row[5] || '';
+        const createdBy = row[6] || '';
+        const scheduleType = row[7] || 'current';
+        
+        notes.push({
+          noteId: noteId,
+          therapistId: therapistId,
+          timeBlock: timeBlock,
+          noteText: noteText,
+          dateCreated: dateCreated,
+          dateModified: dateModified,
+          createdBy: createdBy,
+          scheduleType: scheduleType
+        });
+      }
+      
+      debugLog(`[SHEETS] Successfully loaded ${notes.length} therapist notes`);
+      return notes;
+      
+    } catch (error) {
+      console.error('[SHEETS] Error loading therapist notes:', error);
+      return [];
+    }
+  }
+
+  /**
+   * Save therapist note to the Notes sheet
+   * @param {string} therapistId - Therapist ID
+   * @param {string} timeBlock - Time block (e.g., "Monday 1:00pm")
+   * @param {string} scheduleType - Schedule type ("current" or "future")
+   * @param {string} noteText - Note text content
+   * @returns {string|null} Note ID if successful, null if failed
+   */
+  static saveTherapistNote(therapistId, timeBlock, scheduleType, noteText) {
+    try {
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.NOTES);
+      
+      if (!sheet) {
+        console.error('Notes sheet not found');
+        return null;
+      }
+      
+      debugLog(`[SHEETS] Saving note for therapist ${therapistId}, ${timeBlock}, ${scheduleType}`);
+      
+      // Check if note already exists
+      const existingNote = this.findTherapistNote(therapistId, timeBlock, scheduleType);
+      
+      if (existingNote) {
+        // Update existing note
+        debugLog(`[SHEETS] Updating existing note at row ${existingNote.row}`);
+        
+        const now = new Date().toISOString();
+        
+        // Update: noteText, dateModified
+        sheet.getRange(existingNote.row, 4).setValue(noteText);         // Column 4: noteText
+        sheet.getRange(existingNote.row, 6).setValue(now);              // Column 6: dateModified
+        
+        return existingNote.noteId;
+      } else {
+        // Create new note
+        debugLog(`[SHEETS] Creating new note for therapist ${therapistId}`);
+        
+        const noteId = this.generateNoteId(therapistId, timeBlock, scheduleType);
+        const now = new Date().toISOString();
+        
+        // Column structure: noteId, therapistId, timeBlock, noteText, dateCreated, dateModified, createdBy, scheduleType
+        const newRow = [
+          noteId,           // noteId
+          therapistId,      // therapistId
+          timeBlock,        // timeBlock
+          noteText,         // noteText
+          now,              // dateCreated
+          now,              // dateModified
+          'system',         // createdBy
+          scheduleType      // scheduleType
+        ];
+        
+        sheet.appendRow(newRow);
+        
+        debugLog(`[SHEETS] Successfully created note with ID: ${noteId}`);
+        return noteId;
+      }
+      
+    } catch (error) {
+      console.error('[SHEETS] Error saving therapist note:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Delete therapist note from the Notes sheet
+   * @param {string} therapistId - Therapist ID
+   * @param {string} timeBlock - Time block
+   * @param {string} scheduleType - Schedule type
+   * @returns {number} Number of deleted notes
+   */
+  static deleteTherapistNote(therapistId, timeBlock, scheduleType) {
+    try {
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.NOTES);
+      
+      if (!sheet) {
+        console.error('Notes sheet not found');
+        return 0;
+      }
+      
+      debugLog(`[SHEETS] Deleting note for therapist ${therapistId}, ${timeBlock}, ${scheduleType}`);
+      
+      const data = sheet.getDataRange().getValues();
+      let deletedCount = 0;
+      
+      // Go backwards to avoid index shifting issues
+      for (let i = data.length - 1; i >= 1; i--) {
+        const row = data[i];
+        const rowTherapistId = String(row[1]);
+        const rowTimeBlock = String(row[2]);
+        const rowScheduleType = String(row[7]) || 'current';
+        
+        if (rowTherapistId === String(therapistId) && 
+            rowTimeBlock === timeBlock && 
+            rowScheduleType === scheduleType) {
+          sheet.deleteRow(i + 1);
+          deletedCount++;
+          debugLog(`[SHEETS] Deleted note at row ${i + 1}`);
+        }
+      }
+      
+      debugLog(`[SHEETS] Successfully deleted ${deletedCount} therapist note(s)`);
+      return deletedCount;
+      
+    } catch (error) {
+      console.error('[SHEETS] Error deleting therapist note:', error);
+      return 0;
+    }
+  }
+
+  /**
+   * Find existing therapist note
+   * @param {string} therapistId - Therapist ID
+   * @param {string} timeBlock - Time block
+   * @param {string} scheduleType - Schedule type
+   * @returns {object|null} Note object with row number if found, null if not found
+   */
+  static findTherapistNote(therapistId, timeBlock, scheduleType) {
+    try {
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.NOTES);
+      
+      if (!sheet) {
+        return null;
+      }
+      
+      const data = sheet.getDataRange().getValues();
+      
+      for (let i = 1; i < data.length; i++) {
+        const row = data[i];
+        const rowTherapistId = String(row[1]);
+        const rowTimeBlock = String(row[2]);
+        const rowScheduleType = String(row[7]) || 'current';
+        
+        if (rowTherapistId === String(therapistId) && 
+            rowTimeBlock === timeBlock && 
+            rowScheduleType === scheduleType) {
+          return {
+            row: i + 1,
+            noteId: row[0],
+            therapistId: rowTherapistId,
+            timeBlock: rowTimeBlock,
+            noteText: row[3] || '',
+            dateCreated: row[4] || '',
+            dateModified: row[5] || '',
+            createdBy: row[6] || '',
+            scheduleType: rowScheduleType
+          };
+        }
+      }
+      
+      return null;
+      
+    } catch (error) {
+      console.error('[SHEETS] Error finding therapist note:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Generate unique note ID
+   * @param {string} therapistId - Therapist ID
+   * @param {string} timeBlock - Time block
+   * @param {string} scheduleType - Schedule type
+   * @returns {string} Unique note ID
+   */
+  static generateNoteId(therapistId, timeBlock, scheduleType) {
+    const timestamp = new Date().getTime();
+    const timeBlockClean = timeBlock.replace(/[^a-zA-Z0-9]/g, '');
+    return `note_${therapistId}_${timeBlockClean}_${scheduleType}_${timestamp}`;
+  }
+
+  /**
+   * Update therapist lead BCBA assignment
+   * @param {number} therapistId - Therapist ID (sequential ID)
+   * @param {string} leadBCBA - Lead BCBA name ("Unassigned" for no lead)
+   * @param {string} therapistName - Therapist name (for logging)
+   * @returns {object} Success status and details
+   */
+  static updateTherapistLead(therapistId, leadBCBA, therapistName) {
+    try {
+      debugLog(`[SHEETS] updateTherapistLead called for therapist ${therapistId} to lead: ${leadBCBA}`);
+      
+      // Validate required parameters
+      if (!therapistId || leadBCBA === undefined) {
+        throw new Error('Missing required parameters: therapistId and leadBCBA');
+      }
+      
+      // Open the therapists sheet
+      const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.THERAPISTS);
+      
+      if (!sheet) {
+        throw new Error('Therapists sheet not found');
+      }
+      
+      // Get all data from the sheet
+      const data = sheet.getDataRange().getValues();
+      const headers = data[0];
+      
+      debugLog(`[SHEETS] Found ${data.length - 1} therapist records`);
+      debugLog(`[SHEETS] Headers:`, headers);
+      
+      // Find column indices dynamically based on headers (same logic as getTherapistsData)
+      const getColumnIndex = (possibleNames) => {
+        for (const name of possibleNames) {
+          const index = headers.findIndex(h => h && h.toString().toLowerCase().includes(name.toLowerCase()));
+          if (index !== -1) return index;
+        }
+        return -1;
+      };
+      
+      // Map column indices
+      const colIndexes = {
+        firstName: getColumnIndex(['firstname', 'first']),
+        lastName: getColumnIndex(['lastname', 'last']),
+        fullName: getColumnIndex(['fullname', 'name']),
+        lead: getColumnIndex(['lead'])
+      };
+      
+      debugLog(`[SHEETS] Column mapping:`, colIndexes);
+      
+      if (colIndexes.lead === -1) {
+        console.error(`[SHEETS] Available headers:`, headers);
+        throw new Error('Lead column not found in Therapists sheet. Expected column with "lead" in the name.');
+      }
+      
+      // Since therapistId is now sequential (row index + 1), convert to row index
+      const therapistRowIndex = therapistId; // This is the row index in the data array (1-based)
+      
+      if (therapistRowIndex < 1 || therapistRowIndex >= data.length) {
+        console.error(`[SHEETS] Invalid therapist ID ${therapistId}. Valid range: 1 to ${data.length - 1}`);
+        throw new Error(`Therapist with ID ${therapistId} not found`);
+      }
+      
+      // Get the actual therapist data for verification
+      const therapistRow = data[therapistRowIndex];
+      const firstName = colIndexes.firstName >= 0 ? therapistRow[colIndexes.firstName] : '';
+      const lastName = colIndexes.lastName >= 0 ? therapistRow[colIndexes.lastName] : '';
+      const currentName = `${firstName} ${lastName}`.trim();
+      
+      debugLog(`[SHEETS] Found therapist at row ${therapistRowIndex + 1}: ${currentName}`);
+      
+      // Verify the therapist name matches (if provided)
+      if (therapistName && !currentName.includes(therapistName.split(' ')[0])) {
+        console.warn(`[SHEETS] Name mismatch: expected "${therapistName}", found "${currentName}"`);
+      }
+      
+      // Update the lead BCBA value
+      const actualRowNumber = therapistRowIndex + 1; // Convert to 1-based row number for sheets
+      const actualColumnNumber = colIndexes.lead + 1; // Convert to 1-based column number
+      
+      // Set the new value (handle "Unassigned" case)
+      const newValue = leadBCBA === 'Unassigned' ? '' : leadBCBA;
+      
+      debugLog(`[SHEETS] Updating cell R${actualRowNumber}C${actualColumnNumber} (${headers[colIndexes.lead]})`);
+      sheet.getRange(actualRowNumber, actualColumnNumber).setValue(newValue);
+      
+      debugLog(`[SHEETS] Successfully updated lead BCBA`);
+      
+      return {
+        success: true,
+        message: `Successfully updated ${currentName}'s lead BCBA to ${leadBCBA}`,
+        therapistId: therapistId,
+        therapistName: currentName,
+        leadBCBA: leadBCBA,
+        updatedRow: actualRowNumber,
+        updatedColumn: actualColumnNumber
+      };
+      
+    } catch (error) {
+      console.error('[SHEETS] Error in updateTherapistLead:', error);
+      return {
+        success: false,
+        error: error.message || error.toString()
+      };
+    }
+  }
+
+  /**
+   * Delete all sessions for a therapist
+   */
+  static deleteTherapistSessions(therapistId) {
+    const sheet = this.getSpreadsheet().getSheetByName(SHEET_NAMES.SESSIONS);
+    const data = sheet.getDataRange().getValues();
+    let deletedCount = 0;
+    
+    // Go backwards to avoid index shifting issues
+    for (let i = data.length - 1; i >= 1; i--) {
+      if (String(data[i][0]) === String(therapistId)) {
+        sheet.deleteRow(i + 1);
+        deletedCount++;
+      }
+    }
+    
+    return deletedCount;
+  }
+} 
+
+// Export for use in other files
+function getSheetsService() {
+  return new SheetsService();
+} 
